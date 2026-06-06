@@ -1,0 +1,25 @@
+[package]
+name = "tzu-runner"
+description = "Planning loop, persistence, and structured run reports for tzu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thespis.workspace = true
+thespis_impl.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tzu-acp = { path = "../tzu-acp" }
+tzu-core = { path = "../tzu-core" }
+tzu-repo = { path = "../tzu-repo" }
+
+[dev-dependencies]
+tempfile.workspace = true

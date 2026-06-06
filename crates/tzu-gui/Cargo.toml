@@ -1,0 +1,82 @@
+[package]
+name = "tzu-gui"
+description = "Leptos and Axum GUI for the tzu local-first planning harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, optional = true }
+any_spawner = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+leptos.workspace = true
+leptos_axum = { workspace = true, optional = true }
+leptos_meta.workspace = true
+leptos_router.workspace = true
+lucide-leptos.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+tzu-core = { path = "../tzu-core", optional = true }
+tzu-repo = { path = "../tzu-repo", optional = true }
+tzu-runner = { path = "../tzu-runner", optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+
+[dev-dependencies]
+http-body-util.workspace = true
+tempfile.workspace = true
+tower.workspace = true
+
+[features]
+default = ["ssr"]
+hydrate = ["dep:console_error_panic_hook", "dep:wasm-bindgen", "leptos/hydrate"]
+ssr = [
+  "dep:anyhow",
+  "dep:any_spawner",
+  "dep:axum",
+  "dep:clap",
+  "dep:leptos_axum",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:tokio",
+  "dep:tower-http",
+  "dep:tracing",
+  "dep:tracing-subscriber",
+  "dep:tzu-core",
+  "dep:tzu-repo",
+  "dep:tzu-runner",
+  "leptos/ssr",
+  "leptos_meta/ssr",
+  "leptos_router/ssr",
+]
+
+[[bin]]
+name = "tzu-gui"
+path = "src/main.rs"
+required-features = ["ssr"]
+
+[package.metadata.leptos]
+output-name = "tzu-gui"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+style-file = "style/main.css"
+assets-dir = "public"
+site-addr = "127.0.0.1:7070"
+reload-port = 7071
+browserquery = "defaults"
+bin-features = ["ssr"]
+bin-default-features = false
+lib-features = ["hydrate"]
+lib-default-features = false
+lib-profile-release = "wasm-release"

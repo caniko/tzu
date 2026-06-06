@@ -1,0 +1,3 @@
+[submodule "alphaproof-nexus-results"]
+	path = alphaproof-nexus-results
+	url = https://github.com/google-deepmind/alphaproof-nexus-results.git
