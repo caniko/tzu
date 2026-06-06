@@ -60,6 +60,51 @@ psql 'postgres:///tzu?host=/run/postgresql' -c 'select 1'
 
 SQLite remains supported for local tests and non-Linux defaults.
 
+## Configuration
+
+`tzu` reads optional global configuration from
+`$XDG_CONFIG_HOME/tzu/config.toml`, falling back to
+`~/.config/tzu/config.toml`.
+
+```toml
+projects_directory = "/path/to/projects"
+include_nested_contexts = false
+
+[gui]
+host = "127.0.0.1"
+port = 7070
+enable_service = false
+```
+
+`projects_directory` is a discovery base for colocated local projects. The GUI
+discovers direct child directories that contain `.git` or a known project
+manifest such as `Cargo.toml`, `package.json`, `flake.nix`, `pyproject.toml`,
+`go.mod`, or `lakefile.toml`. Discovered projects are suggestions only; they
+are added to plan context explicitly.
+
+Environment overrides:
+
+```sh
+export TZU_PROJECTS_DIR=/path/to/projects
+export TZU_INCLUDE_NESTED_CONTEXTS=true
+```
+
+When the GUI sees a discovered project name while you type a goal, it shows a
+small suggestion. Press `Ctrl+Space` to add that project path to the context
+roots.
+
+The flake exposes a Home Manager module as `homeModules.tzu` and
+`homeModules.default`:
+
+```nix
+programs.tzu = {
+  enable = true;
+  projectsDirectory = /home/alice/Projects;
+  includeNestedContexts = false;
+  gui.enable = true;
+};
+```
+
 ## Usage
 
 ```sh
@@ -80,8 +125,12 @@ tzu-gui --project-root . --port 7070
 Launch the GUI with development reload enabled:
 
 ```sh
-cargo leptos watch --project tzu-gui --bin-features ssr,dev-hot-reload -- --project-root . --port 7070
+cargo dev-server
 ```
+
+This shortcut uses SQLite at `.tzu/state.sqlite` and enables the GUI's
+`dev-hot-reload` feature. Plain `cargo run --bin tzu-gui` remains the normal
+non-reloading server path.
 
 The GUI serves a Leptos/Axum workbench on `http://127.0.0.1:7070` by default.
 It uses the same project state and database resolution as the CLI.

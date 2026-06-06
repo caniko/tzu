@@ -1,0 +1,2 @@
+[alias]
+dev-server = "leptos watch --project tzu-gui --bin-features ssr,dev-hot-reload -- --database-url sqlite://.tzu/state.sqlite --project-root . --port 7070"
