@@ -21,7 +21,10 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <AutoReload options=options.clone()/>
+                <AutoReload
+                    disable_watch=cfg!(not(feature = "dev-hot-reload"))
+                    options=options.clone()
+                />
                 <HydrationScripts options/>
                 <MetaTags/>
             </head>
@@ -81,7 +84,6 @@ fn Workbench() -> impl IntoView {
                     <div class="segmented" role="radiogroup" aria-label="Planning domain">
                         <label><input type="radio" name="domain" value="generic" checked/>"Generic"</label>
                         <label><input type="radio" name="domain" value="coding"/>"Coding"</label>
-                        <label><input type="radio" name="domain" value="legacy-coding"/>"Legacy"</label>
                     </div>
                 </section>
 
@@ -129,34 +131,36 @@ fn Workbench() -> impl IntoView {
 
                 <section class="task-panel">
                     <div class="panel-heading">
-                        <h2>"Task DAG"</h2>
+                        <h2>"Plan Tasks"</h2>
                         <span class="muted" id="selected-task-status">"Select a task"</span>
                     </div>
                     <div id="task-list" class="task-list empty">
                         <Circle size=18/>
                         <span>"Create or load a plan to inspect tasks."</span>
                     </div>
+                    <div class="task-detail-panel">
+                        <div class="panel-heading compact">
+                            <h2>"Selected Task"</h2>
+                            <button class="run-btn" id="run-task-btn" type="button" disabled>
+                                <Play size=15/>
+                                <span>"Run"</span>
+                            </button>
+                        </div>
+                        <div id="task-detail" class="detail-block muted">"No task selected."</div>
+                        <div class="panel-heading compact">
+                            <h2>"Acceptance"</h2>
+                        </div>
+                        <ul id="acceptance-list" class="acceptance-list"></ul>
+                    </div>
+                </section>
+
+                <section class="report-panel">
+                    <div class="panel-heading">
+                        <h2>"Latest Report"</h2>
+                    </div>
+                    <pre id="latest-report" class="report">"No report yet."</pre>
                 </section>
             </section>
-
-            <aside class="inspector">
-                <div class="panel-heading">
-                    <h2>"Inspector"</h2>
-                    <button class="run-btn" id="run-task-btn" type="button" disabled>
-                        <Play size=15/>
-                        <span>"Run"</span>
-                    </button>
-                </div>
-                <div id="task-detail" class="detail-block muted">"No task selected."</div>
-                <div class="panel-heading compact">
-                    <h2>"Acceptance"</h2>
-                </div>
-                <ul id="acceptance-list" class="acceptance-list"></ul>
-                <div class="panel-heading compact">
-                    <h2>"Latest Report"</h2>
-                </div>
-                <pre id="latest-report" class="report">"No report yet."</pre>
-            </aside>
         </main>
     }
 }

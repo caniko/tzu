@@ -11,9 +11,9 @@ use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use tzu_acp::{CodexAcpConfig, CodexAcpProcess, RejectingPermissionHandler};
 use tzu_core::{
-    CodingDomainAdapter, DeterministicPlanner, DomainKind, GenericDomainAdapter,
-    HarnessPlanMetadata, HarnessPlanner, Planner, PlanningRun, ProjectState, RunReport, TaskStatus,
-    ValidatorOutcome, ordered_tasks, static_validator_outcome, validate_plan,
+    CodingDomainAdapter, DomainKind, GenericDomainAdapter, HarnessPlanMetadata, HarnessPlanner,
+    Planner, PlanningRun, ProjectState, RunReport, TaskStatus, ordered_tasks,
+    static_validator_outcome, validate_plan,
 };
 use tzu_repo::{RepoState, inspect_repo};
 
@@ -54,7 +54,6 @@ pub enum RunMode {
 pub enum PlanningDomain {
     Generic,
     Coding,
-    LegacyCoding,
 }
 
 impl PlanningDomain {
@@ -62,7 +61,7 @@ impl PlanningDomain {
     pub fn kind(self) -> DomainKind {
         match self {
             Self::Generic => DomainKind::Generic,
-            Self::Coding | Self::LegacyCoding => DomainKind::Coding,
+            Self::Coding => DomainKind::Coding,
         }
     }
 }
@@ -339,10 +338,6 @@ impl RunnerActor {
                     repo_head: repo.head,
                     file_count: repo.files.len(),
                 });
-                planner.create_plan(&msg.goal).await?
-            }
-            PlanningDomain::LegacyCoding => {
-                let planner = DeterministicPlanner;
                 planner.create_plan(&msg.goal).await?
             }
         };
@@ -1370,6 +1365,15 @@ mod tests {
                 .get("count");
         assert_eq!(candidate_count, expected_candidate_count);
 
+        let validator_count: i64 =
+            sqlx::query("SELECT COUNT(*) AS count FROM validator_runs WHERE run_id = ?")
+                .bind(&run.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .get("count");
+        assert_eq!(validator_count, expected_candidate_count);
+
         let row = sqlx::query(
             "SELECT id, candidate_json FROM plan_candidates WHERE run_id = ? ORDER BY id LIMIT 1",
         )
@@ -1385,6 +1389,25 @@ mod tests {
         assert!(candidate.get("descriptor").is_some());
         assert!(candidate["score"].get("verifier_strength").is_some());
         assert!(candidate["descriptor"].get("verifier_dependency").is_some());
+
+        let row = sqlx::query(
+            "SELECT id, validator_json FROM validator_runs WHERE run_id = ? ORDER BY id LIMIT 1",
+        )
+        .bind(&run.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let validator_row_id: String = row.get("id");
+        assert!(validator_row_id.starts_with(&format!("{}:", run.id)));
+        assert!(validator_row_id.ends_with(":validator-static"));
+        let validator_json: String = row.get("validator_json");
+        let outcome: tzu_core::ValidatorOutcome = serde_json::from_str(&validator_json).unwrap();
+        assert_eq!(outcome.run_id, run.id);
+        assert_eq!(outcome.candidate_id, "candidate-1");
+        assert_eq!(outcome.tier, tzu_core::ValidationTier::Static);
+        assert_eq!(outcome.status, tzu_core::ValidationOutcomeStatus::Passed);
+        assert_eq!(outcome.reward, tzu_core::ValidationRewardBucket::Partial);
+        assert!(!outcome.candidate_hash.is_empty());
     }
 
     #[tokio::test]

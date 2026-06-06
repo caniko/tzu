@@ -56,20 +56,18 @@ button:disabled {
 
 .tzu-workbench {
   display: grid;
-  grid-template-columns: 260px minmax(420px, 1fr) 340px;
+  grid-template-columns: 260px minmax(420px, 1fr);
   height: 100dvh;
   min-height: 0;
 }
 
 .sidebar,
-.inspector,
 .workspace {
   min-height: 0;
   overflow: hidden;
 }
 
-.sidebar,
-.inspector {
+.sidebar {
   display: flex;
   flex-direction: column;
   background: var(--panel);
@@ -78,11 +76,6 @@ button:disabled {
 
 .sidebar {
   border-right: 1px solid var(--border);
-}
-
-.inspector {
-  border-left: 1px solid var(--border);
-  padding: 14px;
 }
 
 .workspace {
@@ -285,7 +278,8 @@ h2 {
 }
 
 .stat-card,
-.task-panel {
+.task-panel,
+.report-panel {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel) 84%, var(--bg));
@@ -310,8 +304,15 @@ h2 {
 }
 
 .task-panel {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(160px, 1fr) auto;
+}
+
+.report-panel {
+  flex: 0 0 auto;
+  min-height: 180px;
   display: flex;
   flex-direction: column;
 }
@@ -364,8 +365,17 @@ h2 {
 }
 
 .task-id {
+  display: block;
   color: var(--muted);
   font-size: 0.78rem;
+  margin-top: 3px;
+}
+
+.task-detail-panel {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .detail-block,
@@ -385,6 +395,7 @@ h2 {
 
 .acceptance-list {
   padding-left: 18px;
+  max-height: 120px;
   overflow: auto;
 }
 
@@ -418,13 +429,6 @@ h2 {
   .tzu-workbench {
     grid-template-columns: 220px minmax(0, 1fr);
   }
-
-  .inspector {
-    grid-column: 1 / -1;
-    min-height: 280px;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
 }
 
 @media (max-width: 720px) {
@@ -441,7 +445,6 @@ h2 {
   }
 
   .sidebar,
-  .inspector,
   .workspace {
     overflow: visible;
   }

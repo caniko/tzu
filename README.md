@@ -67,6 +67,7 @@ tzu init
 tzu plan "organize a research workshop"
 tzu plan "add health endpoint" --domain coding
 tzu status
+tzu inspect
 tzu run inspect-repo
 ```
 
@@ -76,15 +77,24 @@ Launch the local GUI:
 tzu-gui --project-root . --port 7070
 ```
 
+Launch the GUI with development reload enabled:
+
+```sh
+cargo leptos watch --project tzu-gui --bin-features ssr,dev-hot-reload -- --project-root . --port 7070
+```
+
 The GUI serves a Leptos/Axum workbench on `http://127.0.0.1:7070` by default.
 It uses the same project state and database resolution as the CLI.
 
 `tzu plan` defaults to the generic planning harness. The harness builds an
-immutable problem spec, seeds candidate plan sketches, validates them, scores the
-valid candidates, selects a champion, and persists the selected plan plus
-harness metadata. Use `--domain coding` for repository-aware coding plans.
-`--domain legacy-coding` keeps the original deterministic coding DAG available
-as a compatibility path.
+immutable problem spec, seeds deterministic candidate plan sketches, validates
+them, scores the valid candidates with structured selection metadata, retains a
+capped frontier, selects one execution champion, and persists the selected plan
+plus harness metadata. Use `--domain coding` for repository-aware coding plans.
+
+`tzu status` keeps the normal view concise: it shows the selected candidate,
+candidate count, frontier size, and ordered tasks. Use `tzu inspect` for
+retained candidates, discard reasons, score buckets, and descriptor cells.
 
 `tzu run` currently uses a mocked ACP run path by default and writes a structured
 run report into project state.

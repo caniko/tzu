@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use tzu_core::{
     DomainKind, FrontierDiscardReason, PlanSketch, ProjectState, TaskStatus, ordered_tasks,
@@ -39,7 +39,6 @@ enum Command {
 enum CliPlanningDomain {
     Generic,
     Coding,
-    LegacyCoding,
 }
 
 impl From<CliPlanningDomain> for PlanningDomain {
@@ -47,7 +46,6 @@ impl From<CliPlanningDomain> for PlanningDomain {
         match value {
             CliPlanningDomain::Generic => Self::Generic,
             CliPlanningDomain::Coding => Self::Coding,
-            CliPlanningDomain::LegacyCoding => Self::LegacyCoding,
         }
     }
 }
@@ -90,10 +88,7 @@ async fn run(cli: Cli) -> Result<()> {
             let state = runner.status().await?;
             print_status(&state)?;
         }
-        Command::Inspect { frontier } => {
-            if !frontier {
-                bail!("inspect currently requires --frontier");
-            }
+        Command::Inspect { frontier: _ } => {
             let state = runner.status().await?;
             print_frontier(&state)?;
         }
@@ -310,7 +305,7 @@ mod tests {
             .arg(temp.path())
             .arg("--database-url")
             .arg(&db_url)
-            .args(["inspect", "--frontier"])
+            .arg("inspect")
             .output()
             .unwrap();
         assert!(

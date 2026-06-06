@@ -470,63 +470,6 @@ pub trait Planner: Send + Sync {
     async fn create_plan(&self, goal: &str) -> Result<Plan, PlanError>;
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct DeterministicPlanner;
-
-#[async_trait]
-impl Planner for DeterministicPlanner {
-    async fn create_plan(&self, goal: &str) -> Result<Plan, PlanError> {
-        let normalized = goal.trim();
-        let plan = Plan {
-            id: stable_plan_id(normalized),
-            goal: normalized.to_string(),
-            tasks: vec![
-                Task::new(
-                    "inspect-repo",
-                    "Inspect repository state",
-                    "Load repository metadata, file tree, and language summary before making changes.",
-                    Risk::Low,
-                    vec![AcceptanceCriterion {
-                        description: "Repository state is indexed and attached to the run context."
-                            .to_string(),
-                    }],
-                    Vec::new(),
-                ),
-                Task::new(
-                    "implement-goal",
-                    "Implement requested goal",
-                    format!(
-                        "Use ACP-backed Codex execution for semantic coding work: {normalized}"
-                    ),
-                    Risk::Medium,
-                    vec![AcceptanceCriterion {
-                        description: format!(
-                            "The codebase implements the requested goal: {normalized}"
-                        ),
-                    }],
-                    vec!["inspect-repo".to_string()],
-                ),
-                Task::new(
-                    "verify-goal",
-                    "Verify implementation",
-                    "Run focused checks, inspect changed files, and produce a structured run report.",
-                    Risk::Low,
-                    vec![AcceptanceCriterion {
-                        description:
-                            "Verification results and changed files are captured in a run report."
-                                .to_string(),
-                    }],
-                    vec!["implement-goal".to_string()],
-                ),
-            ],
-            domain: DomainKind::Coding,
-            harness: None,
-        };
-        validate_plan(&plan)?;
-        Ok(plan)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct HarnessPlanner<A> {
     adapter: A,
@@ -1481,7 +1424,9 @@ pub fn derive_validation_reward(
         ValidationOutcomeStatus::Failed | ValidationOutcomeStatus::Blocked => {
             ValidationRewardBucket::Zero
         }
-        ValidationOutcomeStatus::Passed if obligations_discharged > 0 || evidence_refs_added > 0 => {
+        ValidationOutcomeStatus::Passed
+            if obligations_discharged > 0 || evidence_refs_added > 0 =>
+        {
             ValidationRewardBucket::Full
         }
         ValidationOutcomeStatus::Passed => ValidationRewardBucket::Partial,
@@ -1576,8 +1521,13 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[tokio::test]
-    async fn deterministic_planner_creates_ordered_dag() {
-        let planner = DeterministicPlanner;
+    async fn coding_harness_planner_creates_ordered_dag() {
+        let planner = HarnessPlanner::new(CodingDomainAdapter {
+            project_root: "/tmp/tzu-test".to_string(),
+            repo_dirty: false,
+            repo_head: None,
+            file_count: 3,
+        });
         let plan = planner.create_plan("add health endpoint").await.unwrap();
         let ordered = ordered_tasks(&plan).unwrap();
 
@@ -1586,13 +1536,19 @@ mod tests {
                 .iter()
                 .map(|task| task.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["inspect-repo", "implement-goal", "verify-goal"]
+            vec![
+                "inspect-repo",
+                "search-implementation-plan",
+                "implement-goal",
+                "verify-goal"
+            ]
         );
         assert!(
             ordered
                 .iter()
                 .all(|task| !task.acceptance_criteria.is_empty())
         );
+        assert!(plan.harness.is_some());
     }
 
     #[test]

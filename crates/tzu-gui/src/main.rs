@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         project_root: cli.project_root,
         database_url: cli.database_url,
     };
-    let mut leptos_options = get_configuration(None)?.leptos_options;
+    let mut leptos_options = leptos_options()?;
     leptos_options.site_addr = config.addr();
     let state = build_state(&config).await?;
     let app = router(state, leptos_options);
@@ -54,3 +54,18 @@ async fn main() -> Result<()> {
 
 #[cfg(not(feature = "ssr"))]
 pub fn main() {}
+
+#[cfg(feature = "ssr")]
+fn leptos_options() -> Result<leptos::config::LeptosOptions> {
+    if std::env::var_os("LEPTOS_OUTPUT_NAME").is_some() {
+        return Ok(get_configuration(None)?.leptos_options);
+    }
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    Ok(get_configuration(Some(
+        manifest
+            .to_str()
+            .expect("GUI Cargo.toml path must be valid UTF-8"),
+    ))?
+    .leptos_options)
+}
