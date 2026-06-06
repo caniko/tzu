@@ -19,8 +19,8 @@
     treefmt-nix,
     git-hooks,
     ...
-  }:
-    flake-utils.lib.eachDefaultSystem (system: let
+  }: let
+    perSystem = flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {
         inherit system;
         overlays = [(import rust-overlay)];
@@ -77,6 +77,9 @@
             cargoClippyExtraArgs = "--all-targets --all-features -- --deny warnings";
           });
         fmt = craneLib.cargoFmt {inherit src;};
+        home-manager-module = pkgs.callPackage ./nix/home-manager-module-test.nix {
+          module = import ./nix/home-manager.nix self;
+        };
       };
       devShells.default = craneLib.devShell {
         checks = self.checks.${system};
@@ -97,4 +100,10 @@
         shellHook = pre-commit-check.shellHook;
       };
     });
+  in
+    perSystem
+    // {
+      homeModules.default = self.homeModules.tzu;
+      homeModules.tzu = import ./nix/home-manager.nix self;
+    };
 }

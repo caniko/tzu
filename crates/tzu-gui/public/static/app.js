@@ -2,21 +2,47 @@ const state = {
   project: null,
   repo: null,
   selectedTaskId: null,
+  latestError: null,
+  config: null,
+  discoveredProjects: [],
+  suggestedProject: null,
+  configApplied: false,
 };
 
 const $ = (id) => document.getElementById(id);
 
 async function request(path, options = {}) {
+  const { operation = "Backend request", ...fetchOptions } = options;
+  const startedAt = new Date().toISOString();
   const response = await fetch(path, {
-    headers: { "content-type": "application/json", ...(options.headers || {}) },
-    ...options,
+    headers: { "content-type": "application/json", ...(fetchOptions.headers || {}) },
+    ...fetchOptions,
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseResponseBody(text);
   if (!response.ok) {
-    throw new Error(data?.error || `${response.status} ${response.statusText}`);
+    const error = new Error(data?.error || `${response.status} ${response.statusText}`);
+    error.kind = data?.kind || classifyErrorKind(error.message, response.status);
+    error.operation = operation;
+    error.status = response.status;
+    error.statusText = response.statusText;
+    error.path = path;
+    error.method = fetchOptions.method || "GET";
+    error.responseBody = data || text;
+    error.startedAt = startedAt;
+    error.endedAt = new Date().toISOString();
+    throw error;
   }
   return data;
+}
+
+function parseResponseBody(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    return text;
+  }
 }
 
 function setText(id, value) {
@@ -29,10 +55,90 @@ function setHealth(kind, text) {
   if (!pill) return;
   pill.textContent = text;
   pill.className = `pill ${kind}`;
+  updateErrorAffordance();
+}
+
+function clearLatestError() {
+  state.latestError = null;
+  updateErrorAffordance();
+}
+
+function captureError(error, operation) {
+  const captured = normalizeError(error, operation);
+  state.latestError = captured;
+  setText("backend-status", captured.message);
+  setHealth("error", "error");
+  updateErrorAffordance();
+  return captured;
+}
+
+function normalizeError(error, operation) {
+  const message = error?.message || String(error || "Unknown error");
+  const kind = normalizeErrorKind(error?.kind, message, error?.status);
+  return {
+    message,
+    kind,
+    operation: error?.operation || operation,
+    timestamp: new Date().toISOString(),
+    status: error?.status || null,
+    statusText: error?.statusText || null,
+    method: error?.method || null,
+    path: error?.path || null,
+    responseBody: error?.responseBody || null,
+    stack: error?.stack || null,
+  };
+}
+
+function normalizeErrorKind(kind, message, status) {
+  if (kind === "runner-error") {
+    const lower = String(message || "").toLowerCase();
+    if (lower.includes("database")) return "database-unavailable";
+    if (lower.includes("no current plan") || lower.includes("not found")) {
+      return "missing-resource";
+    }
+  }
+  return kind || classifyErrorKind(message, status);
+}
+
+function classifyErrorKind(message, status) {
+  const lower = String(message || "").toLowerCase();
+  if (lower.includes("database")) return "database-unavailable";
+  if (lower.includes("no current plan") || lower.includes("not found") || status === 404) {
+    return "missing-resource";
+  }
+  if (status && status >= 500) return "internal";
+  return "network";
+}
+
+function updateErrorAffordance() {
+  const hasError = Boolean(state.latestError);
+  for (const node of [$("health-pill"), $("backend-status")]) {
+    if (!node) continue;
+    node.classList.toggle("error-clickable", hasError);
+    node.setAttribute("aria-disabled", hasError ? "false" : "true");
+    node.setAttribute("role", hasError ? "button" : "status");
+    if (hasError) {
+      node.setAttribute("tabindex", "0");
+    } else {
+      node.removeAttribute("tabindex");
+    }
+    node.title = hasError ? "Show error details" : "";
+  }
 }
 
 function domainValue() {
   return document.querySelector("input[name='domain']:checked")?.value || "generic";
+}
+
+function contextRootsValue() {
+  return ($("context-roots-input")?.value || "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function includeNestedContextsValue() {
+  return Boolean($("include-nested-contexts")?.checked);
 }
 
 function currentPlan() {
@@ -71,6 +177,38 @@ function renderRepo(repo) {
   state.repo = repo;
   setText("repo-files", String(repo.files?.length || 0));
   setText("repo-dirty", repo.dirty ? "yes" : "no");
+}
+
+function renderConfig(config) {
+  state.config = config || {};
+  const nested = $("include-nested-contexts");
+  if (nested && !state.configApplied) {
+    nested.checked = Boolean(state.config?.include_nested_contexts);
+  }
+  state.configApplied = true;
+}
+
+function renderDiscoveredProjects(projects) {
+  state.discoveredProjects = Array.isArray(projects) ? projects : [];
+  const list = $("discovered-projects");
+  if (!list) return;
+  if (!state.discoveredProjects.length) {
+    list.classList.add("muted");
+    list.textContent = "No configured projects.";
+    return;
+  }
+  list.classList.remove("muted");
+  list.innerHTML = "";
+  for (const project of state.discoveredProjects) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "project-chip";
+    item.textContent = project.name;
+    item.title = project.path;
+    item.addEventListener("click", () => addContextRoot(project.path));
+    list.appendChild(item);
+  }
+  updateProjectSuggestion();
 }
 
 function renderTasks() {
@@ -155,46 +293,113 @@ function renderReports() {
 async function refreshAll() {
   try {
     setHealth("", "loading");
-    const [health, project, repo] = await Promise.all([
+    const [health, project, repo, config, projects] = await Promise.all([
       request("/api/health"),
       request("/api/state"),
       request("/api/repo"),
+      request("/api/config"),
+      request("/api/projects"),
     ]);
     setText("backend-status", health.status);
+    renderConfig(config);
+    renderDiscoveredProjects(projects);
     renderProject(project);
     renderRepo(repo);
+    clearLatestError();
     setHealth("ok", "online");
   } catch (error) {
-    setText("backend-status", error.message);
-    setHealth("error", "error");
+    captureError(error, "Refresh project state");
   }
 }
 
 async function initialize() {
-  const project = await request("/api/init", { method: "POST" });
-  renderProject(project);
+  try {
+    const project = await request("/api/init", {
+      method: "POST",
+      operation: "Initialize project state",
+    });
+    clearLatestError();
+    renderProject(project);
+  } catch (error) {
+    captureError(error, "Initialize project state");
+  }
 }
 
 async function createPlan(event) {
   event.preventDefault();
   const goal = $("goal-input")?.value?.trim();
   if (!goal) return;
-  const project = await request("/api/plans", {
-    method: "POST",
-    body: JSON.stringify({ goal, domain: domainValue() }),
-  });
-  state.selectedTaskId = null;
-  renderProject(project);
+  try {
+    const project = await request("/api/plans", {
+      method: "POST",
+      body: JSON.stringify({
+        goal,
+        domain: domainValue(),
+        context_roots: contextRootsValue(),
+        include_nested_contexts: includeNestedContextsValue(),
+      }),
+      operation: "Create plan",
+    });
+    clearLatestError();
+    state.selectedTaskId = null;
+    renderProject(project);
+  } catch (error) {
+    captureError(error, "Create plan");
+  }
 }
 
 async function runSelectedTask() {
   if (!state.selectedTaskId) return;
-  const report = await request(`/api/tasks/${encodeURIComponent(state.selectedTaskId)}/run`, {
-    method: "POST",
-    body: JSON.stringify({ mode: "mock" }),
-  });
-  setText("latest-report", JSON.stringify(report, null, 2));
-  await refreshAll();
+  try {
+    const report = await request(`/api/tasks/${encodeURIComponent(state.selectedTaskId)}/run`, {
+      method: "POST",
+      body: JSON.stringify({ mode: "mock" }),
+      operation: "Run selected task",
+    });
+    clearLatestError();
+    setText("latest-report", JSON.stringify(report, null, 2));
+    await refreshAll();
+  } catch (error) {
+    captureError(error, "Run selected task");
+  }
+}
+
+function openErrorDialog() {
+  if (!state.latestError) return;
+  const dialog = $("error-dialog");
+  const panel = document.querySelector(".error-dialog-panel");
+  if (!dialog) return;
+  setText("error-dialog-title", `${state.latestError.operation || "Request"} failed`);
+  setText("error-dialog-explainer", explainError(state.latestError));
+  setText("error-dialog-logs", JSON.stringify(state.latestError, null, 2));
+  dialog.classList.remove("hidden");
+  dialog.setAttribute("aria-hidden", "false");
+  panel?.focus();
+}
+
+function closeErrorDialog() {
+  const dialog = $("error-dialog");
+  if (!dialog) return;
+  dialog.classList.add("hidden");
+  dialog.setAttribute("aria-hidden", "true");
+}
+
+function explainError(error) {
+  switch (error.kind) {
+    case "database-unavailable":
+    case "runner-error":
+      if (String(error.message).toLowerCase().includes("database")) {
+        return "The configured database could not be reached or initialized. Check the database URL, make sure the service is running, or switch to a local SQLite URL for development.";
+      }
+      return "The backend runner rejected the request. The details below include the operation, route, status, and raw backend response.";
+    case "missing-resource":
+      return "This action needs a current plan or task that does not exist in the loaded project state. Create or refresh the plan, then try again.";
+    case "network":
+      return "The GUI could not complete a backend request. The server may be unavailable, the request may have failed, or the response could not be processed.";
+    case "internal":
+    default:
+      return "The backend returned an unexpected error. The raw request details below are preserved so the failure can be diagnosed.";
+  }
 }
 
 function escapeHtml(value) {
@@ -205,10 +410,90 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function currentGoalWord() {
+  const input = $("goal-input");
+  if (!input) return "";
+  const cursor = input.selectionStart ?? input.value.length;
+  const before = input.value.slice(0, cursor);
+  const match = before.match(/[A-Za-z0-9_.-]+$/);
+  return match ? match[0] : "";
+}
+
+function updateProjectSuggestion() {
+  const suggestion = $("project-suggestion");
+  if (!suggestion) return;
+  const word = currentGoalWord().toLowerCase();
+  const project = word.length >= 2
+    ? state.discoveredProjects.find((project) => {
+        const name = String(project.name || "").toLowerCase();
+        return name === word || name.startsWith(word);
+      })
+    : null;
+  state.suggestedProject = project || null;
+  if (!project) {
+    suggestion.classList.add("hidden");
+    setText("project-suggestion-text", "");
+    return;
+  }
+  setText("project-suggestion-text", `Add ${project.name} as context`);
+  suggestion.classList.remove("hidden");
+}
+
+function addContextRoot(path) {
+  if (!path) return;
+  const input = $("context-roots-input");
+  if (!input) return;
+  const roots = contextRootsValue();
+  if (!roots.includes(path)) {
+    roots.push(path);
+    input.value = roots.join("\n");
+  }
+  hideProjectSuggestion();
+}
+
+function acceptProjectSuggestion() {
+  if (!state.suggestedProject) return;
+  addContextRoot(state.suggestedProject.path);
+}
+
+function hideProjectSuggestion() {
+  state.suggestedProject = null;
+  $("project-suggestion")?.classList.add("hidden");
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   $("refresh-btn")?.addEventListener("click", refreshAll);
   $("init-btn")?.addEventListener("click", initialize);
   $("plan-form")?.addEventListener("submit", createPlan);
   $("run-task-btn")?.addEventListener("click", runSelectedTask);
+  $("goal-input")?.addEventListener("input", updateProjectSuggestion);
+  $("goal-input")?.addEventListener("keyup", updateProjectSuggestion);
+  $("goal-input")?.addEventListener("click", updateProjectSuggestion);
+  $("goal-input")?.addEventListener("keydown", (event) => {
+    if (event.ctrlKey && event.key === " ") {
+      event.preventDefault();
+      acceptProjectSuggestion();
+    } else if (event.key === "Escape") {
+      hideProjectSuggestion();
+    }
+  });
+  $("health-pill")?.addEventListener("click", openErrorDialog);
+  $("backend-status")?.addEventListener("click", openErrorDialog);
+  for (const id of ["health-pill", "backend-status"]) {
+    $(id)?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openErrorDialog();
+      }
+    });
+  }
+  $("error-dialog-close")?.addEventListener("click", closeErrorDialog);
+  $("error-dialog-backdrop")?.addEventListener("click", closeErrorDialog);
+  document.querySelector(".error-dialog-panel")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeErrorDialog();
+  });
   refreshAll();
 });

@@ -1,6 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
+use anyhow::Context;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -8,6 +9,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use leptos::config::LeptosOptions;
 use serde::{Deserialize, Serialize};
+use tzu_config::{DiscoveredProject, TzuConfig, discover_projects, load_config};
 use tzu_core::ProjectState;
 use tzu_repo::RepoState;
 use tzu_runner::{
@@ -20,12 +22,31 @@ use crate::app::shell;
 #[derive(Clone)]
 pub struct GuiState {
     runner: RunnerActorHandle,
+    config: TzuConfig,
+    discovered_projects: Vec<DiscoveredProject>,
 }
 
 impl GuiState {
     #[must_use]
     pub fn new(runner: RunnerActorHandle) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            config: TzuConfig::default(),
+            discovered_projects: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_config(
+        runner: RunnerActorHandle,
+        config: TzuConfig,
+        discovered_projects: Vec<DiscoveredProject>,
+    ) -> Self {
+        Self {
+            runner,
+            config,
+            discovered_projects,
+        }
     }
 }
 
@@ -44,7 +65,10 @@ impl GuiConfig {
     }
 }
 
-pub async fn build_state(config: &GuiConfig) -> Result<GuiState, RunnerError> {
+pub async fn build_state(config: &GuiConfig) -> anyhow::Result<GuiState> {
+    let app_config = load_config().context("load tzu config")?;
+    let discovered_projects =
+        discover_projects(&app_config).context("discover configured projects")?;
     let root = config
         .project_root
         .canonicalize()
@@ -54,7 +78,11 @@ pub async fn build_state(config: &GuiConfig) -> Result<GuiState, RunnerError> {
         .clone()
         .unwrap_or_else(|| default_database_url(&root));
     let runner = TzuRunner::connect(root, &database_url).await?;
-    Ok(GuiState::new(runner.actor()))
+    Ok(GuiState::with_config(
+        runner.actor(),
+        app_config,
+        discovered_projects,
+    ))
 }
 
 pub fn router(state: GuiState, options: LeptosOptions) -> Router {
@@ -62,6 +90,8 @@ pub fn router(state: GuiState, options: LeptosOptions) -> Router {
     let app_options = options.clone();
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/config", get(config_snapshot))
+        .route("/api/projects", get(projects_snapshot))
         .route("/api/state", get(state_snapshot))
         .route("/api/init", post(init))
         .route("/api/plans", post(create_plan))
@@ -87,6 +117,14 @@ async fn state_snapshot(State(state): State<GuiState>) -> Result<Json<ProjectSta
     Ok(Json(state.runner.status().await?))
 }
 
+async fn config_snapshot(State(state): State<GuiState>) -> Json<TzuConfig> {
+    Json(state.config)
+}
+
+async fn projects_snapshot(State(state): State<GuiState>) -> Json<Vec<DiscoveredProject>> {
+    Json(state.discovered_projects)
+}
+
 async fn init(State(state): State<GuiState>) -> Result<Json<ProjectState>, ApiError> {
     Ok(Json(state.runner.init().await?))
 }
@@ -100,6 +138,13 @@ async fn create_plan(
         .create_plan(tzu_runner::CreatePlan {
             goal: request.goal,
             domain: request.domain,
+            context_roots: request
+                .context_roots
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
+            include_nested_contexts: request.include_nested_contexts
+                || state.config.include_nested_contexts,
         })
         .await?;
     Ok(Json(plan))
@@ -150,6 +195,10 @@ struct HealthResponse {
 struct CreatePlanRequest {
     goal: String,
     domain: PlanningDomain,
+    #[serde(default)]
+    context_roots: Vec<String>,
+    #[serde(default)]
+    include_nested_contexts: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,6 +272,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shell_contains_error_dialog_controls() {
+        let app = test_router().await;
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains(r#"id="error-dialog""#));
+        assert!(body.contains(r#"role="dialog""#));
+        assert!(body.contains(r#"id="error-dialog-explainer""#));
+        assert!(body.contains(r#"id="error-dialog-logs""#));
+        assert!(body.contains(r#"id="error-dialog-close""#));
+        assert!(body.contains(r#"id="discovered-projects""#));
+        assert!(body.contains(r#"id="project-suggestion""#));
+        assert!(body.contains(r#"id="project-suggestion-text""#));
+    }
+
+    #[tokio::test]
+    async fn config_and_projects_endpoints_report_discovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("state");
+        std::fs::create_dir_all(&root).unwrap();
+        let projects_root = temp.path().join("projects");
+        let project = projects_root.join("alpha");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("Cargo.toml"), "[package]\nname='alpha'\n").unwrap();
+        let db = root.join("state.sqlite");
+        let url = format!("sqlite://{}", db.display());
+        let runner = TzuRunner::connect(&root, &url).await.unwrap();
+        let options = LeptosOptions::builder()
+            .output_name("tzu-gui".to_string())
+            .build();
+        let config = TzuConfig {
+            projects_directory: Some(projects_root.clone()),
+            include_nested_contexts: true,
+            gui: Default::default(),
+        };
+        let projects = discover_projects(&config).unwrap();
+        let app = router(
+            GuiState::with_config(runner.actor(), config, projects),
+            options,
+        );
+
+        let config_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(config_response.status(), StatusCode::OK);
+        let bytes = config_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains(r#""include_nested_contexts":true"#));
+
+        let projects_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(projects_response.status(), StatusCode::OK);
+        let bytes = projects_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains(r#""name":"alpha""#));
+        assert!(body.contains("Cargo.toml"));
+    }
+
+    #[tokio::test]
     async fn plan_and_run_endpoints_mutate_state() {
         let app = test_router().await;
         let init = app
@@ -246,7 +382,7 @@ mod tests {
                     .uri("/api/plans")
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"goal":"add health endpoint","domain":"generic"}"#,
+                        r#"{"goal":"add health endpoint","domain":"generic","context_roots":[],"include_nested_contexts":false}"#,
                     ))
                     .unwrap(),
             )

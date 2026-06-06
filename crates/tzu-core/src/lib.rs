@@ -862,9 +862,45 @@ fn generic_blocker_reduction_candidate(spec: &ProblemSpec) -> PlanCandidate {
 #[derive(Debug, Clone)]
 pub struct CodingDomainAdapter {
     pub project_root: String,
-    pub repo_dirty: bool,
-    pub repo_head: Option<String>,
+    pub context: CodingContextSummary,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CodingContextSummary {
+    pub snapshot_id: String,
+    pub roots: Vec<CodingContextRootSummary>,
+    pub summary: String,
+}
+
+impl CodingContextSummary {
+    #[must_use]
+    pub fn total_file_count(&self) -> usize {
+        self.roots.iter().map(|root| root.file_count).sum()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CodingContextRootSummary {
+    pub id: String,
+    pub root: String,
+    pub head: Option<String>,
+    pub dirty: bool,
     pub file_count: usize,
+    pub languages: Vec<String>,
+    pub manifests: Vec<String>,
+    pub docs: Vec<String>,
+    pub nested_boundaries: usize,
+    pub traversal: ContextTraversalSummary,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextTraversalSummary {
+    pub traversed_entries: usize,
+    pub indexed_files: usize,
+    pub skipped_ignored_entries: Option<usize>,
+    pub walk_errors: usize,
+    pub skipped_nested_contexts: usize,
+    pub skipped_after_limit: usize,
 }
 
 impl DomainAdapter for CodingDomainAdapter {
@@ -879,14 +915,25 @@ impl DomainAdapter for CodingDomainAdapter {
             summary: normalized.to_string(),
         }];
         evidence.push(EvidenceRef {
-            source: "repo-inspection".to_string(),
-            summary: format!(
-                "head={}, dirty={}, files={}",
-                self.repo_head.as_deref().unwrap_or("unknown"),
-                self.repo_dirty,
-                self.file_count
-            ),
+            source: "project-context-snapshot".to_string(),
+            summary: self.context.summary.clone(),
         });
+        evidence.extend(self.context.roots.iter().map(|root| EvidenceRef {
+            source: format!("project-context:{}", root.id),
+            summary: format!(
+                "root={}, head={}, dirty={}, files={}, languages=[{}], manifests=[{}], docs=[{}], nested_boundaries={}, traversed_entries={}, skipped_after_limit={}",
+                root.root,
+                root.head.as_deref().unwrap_or("unknown"),
+                root.dirty,
+                root.file_count,
+                root.languages.join(", "),
+                root.manifests.join(", "),
+                root.docs.join(", "),
+                root.nested_boundaries,
+                root.traversal.traversed_entries,
+                root.traversal.skipped_after_limit,
+            ),
+        }));
         ProblemSpec::new(
             normalized,
             self.domain(),
@@ -895,6 +942,10 @@ impl DomainAdapter for CodingDomainAdapter {
                 "Use codex-acp for semantic coding agent work.".to_string(),
                 "Do not overwrite unrelated user work.".to_string(),
                 "Project planning, persistence, policy, and validation stay local to tzu."
+                    .to_string(),
+                "Use the persisted project context snapshot before requesting lazy file expansion."
+                    .to_string(),
+                "Represent missing or stale context files as explicit blockers instead of inventing content."
                     .to_string(),
             ],
             vec![AcceptanceCriterion {
@@ -911,11 +962,11 @@ impl DomainAdapter for CodingDomainAdapter {
                 Task::new(
                     "inspect-repo",
                     "Inspect repository state",
-                    "Load repository metadata, file tree, language summary, current plan state, and dirty-worktree context before changing source.",
+                    "Load the persisted multi-root project context snapshot, including file tree, language summary, manifests, documentation, nested boundaries, current plan state, and dirty-worktree context before changing source.",
                     Risk::Low,
                     vec![AcceptanceCriterion {
                         description:
-                            "Repository state and relevant evidence are attached to the run context."
+                            "Repository state and relevant evidence are attached to the run context from the persisted context snapshot."
                                 .to_string(),
                     }],
                     Vec::new(),
@@ -938,7 +989,7 @@ impl DomainAdapter for CodingDomainAdapter {
                 Task::new(
                     "implement-goal",
                     "Implement selected plan",
-                    "Execute the selected validated coding plan through bounded ACP-backed work sessions.",
+                    "Execute the selected validated coding plan through bounded ACP-backed work sessions, lazily expanding only indexed files needed for each agent step.",
                     Risk::Medium,
                     vec![AcceptanceCriterion {
                         description: format!("Implementation satisfies the requested goal: {}", spec.goal),
@@ -962,10 +1013,14 @@ impl DomainAdapter for CodingDomainAdapter {
                 "codex-acp remains the only v1 agent backend.".to_string(),
                 "Repo-local validators decide whether an agent-produced plan is admissible."
                     .to_string(),
+                "Full file contents are loaded lazily from indexed context paths only when an agent step needs them."
+                    .to_string(),
             ],
             risks: vec![
                 "Dirty worktree requires careful isolation of unrelated user edits.".to_string(),
                 "Agent output must be schema-checked before it becomes project state.".to_string(),
+                "Missing or stale context files block expansion until the context snapshot is regenerated."
+                    .to_string(),
             ],
             verification: vec![
                 "Run the repo's focused tests or build checks after implementation.".to_string(),
@@ -992,13 +1047,24 @@ impl DomainAdapter for CodingDomainAdapter {
                 "coding plans require a project root in the immutable problem spec",
             );
         }
-        if self.file_count == 0 {
+        if self.context.roots.is_empty() {
+            result.obligations.push(Obligation {
+                id: "context-roots".to_string(),
+                description: "No context roots were available for the coding plan.".to_string(),
+                producer: "tzu-runner CreatePlan context root resolution".to_string(),
+                regenerate_command: "tzu plan \"<goal>\" --domain coding --context-root <path>"
+                    .to_string(),
+                validation_command: "test -d <path>".to_string(),
+            });
+        }
+        if self.context.total_file_count() == 0 {
             result.obligations.push(Obligation {
                 id: "repo-files".to_string(),
-                description: "Repository inspection found no files.".to_string(),
-                producer: "tzu-repo inspect_repo".to_string(),
-                regenerate_command: "tzu status".to_string(),
-                validation_command: "find . -type f | head".to_string(),
+                description: "Project context inspection found no indexed files.".to_string(),
+                producer: "tzu-repo inspect_context".to_string(),
+                regenerate_command: "tzu plan \"<goal>\" --domain coding --context-root <path>"
+                    .to_string(),
+                validation_command: "find <path> -type f | head".to_string(),
             });
         }
         result
@@ -1524,9 +1590,29 @@ mod tests {
     async fn coding_harness_planner_creates_ordered_dag() {
         let planner = HarnessPlanner::new(CodingDomainAdapter {
             project_root: "/tmp/tzu-test".to_string(),
-            repo_dirty: false,
-            repo_head: None,
-            file_count: 3,
+            context: CodingContextSummary {
+                snapshot_id: "context-test".to_string(),
+                summary: "1 context roots, 3 indexed files, 0 nested boundaries".to_string(),
+                roots: vec![CodingContextRootSummary {
+                    id: "context-root-1".to_string(),
+                    root: "/tmp/tzu-test".to_string(),
+                    head: None,
+                    dirty: false,
+                    file_count: 3,
+                    languages: vec!["Rust=3".to_string()],
+                    manifests: vec!["Cargo.toml".to_string()],
+                    docs: vec!["README.md".to_string()],
+                    nested_boundaries: 0,
+                    traversal: ContextTraversalSummary {
+                        traversed_entries: 4,
+                        indexed_files: 3,
+                        skipped_ignored_entries: None,
+                        walk_errors: 0,
+                        skipped_nested_contexts: 0,
+                        skipped_after_limit: 0,
+                    },
+                }],
+            },
         });
         let plan = planner.create_plan("add health endpoint").await.unwrap();
         let ordered = ordered_tasks(&plan).unwrap();

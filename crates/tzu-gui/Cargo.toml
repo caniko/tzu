@@ -29,6 +29,7 @@ tower-http = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 tzu-core = { path = "../tzu-core", optional = true }
+tzu-config = { path = "../tzu-config", optional = true }
 tzu-repo = { path = "../tzu-repo", optional = true }
 tzu-runner = { path = "../tzu-runner", optional = true }
 wasm-bindgen = { workspace = true, optional = true }
@@ -55,6 +56,7 @@ ssr = [
   "dep:tracing",
   "dep:tracing-subscriber",
   "dep:tzu-core",
+  "dep:tzu-config",
   "dep:tzu-repo",
   "dep:tzu-runner",
   "leptos/ssr",

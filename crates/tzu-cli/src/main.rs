@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use tzu_config::load_config;
 use tzu_core::{
     DomainKind, FrontierDiscardReason, PlanSketch, ProjectState, TaskStatus, ordered_tasks,
 };
@@ -24,6 +25,10 @@ enum Command {
         goal: String,
         #[arg(long, value_enum, default_value_t = CliPlanningDomain::Generic)]
         domain: CliPlanningDomain,
+        #[arg(long = "context-root")]
+        context_roots: Vec<std::path::PathBuf>,
+        #[arg(long)]
+        include_nested_contexts: bool,
     },
     Run {
         task_id: String,
@@ -62,6 +67,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    let config = load_config().context("load tzu config")?;
     let root = cli
         .project_root
         .canonicalize()
@@ -76,8 +82,16 @@ async fn run(cli: Cli) -> Result<()> {
             let state = runner.init().await?;
             println!("initialized tzu state for {}", state.project_root);
         }
-        Command::Plan { goal, domain } => {
-            let state = runner.plan_with_domain(&goal, domain.into()).await?;
+        Command::Plan {
+            goal,
+            domain,
+            context_roots,
+            include_nested_contexts,
+        } => {
+            let include_nested_contexts = include_nested_contexts || config.include_nested_contexts;
+            let state = runner
+                .plan_with_context(&goal, domain.into(), context_roots, include_nested_contexts)
+                .await?;
             print_status(&state)?;
         }
         Command::Run { task_id } => {
@@ -257,6 +271,7 @@ mod tests {
             .arg(temp.path())
             .arg("--database-url")
             .arg(&db_url)
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
             .arg("init")
             .output()
             .unwrap();
@@ -271,7 +286,15 @@ mod tests {
             .arg(temp.path())
             .arg("--database-url")
             .arg(&db_url)
-            .args(["plan", "add health endpoint", "--domain", "coding"])
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
+            .args([
+                "plan",
+                "add health endpoint",
+                "--domain",
+                "coding",
+                "--context-root",
+            ])
+            .arg(temp.path())
             .output()
             .unwrap();
         assert!(
@@ -286,6 +309,7 @@ mod tests {
             .arg(temp.path())
             .arg("--database-url")
             .arg(&db_url)
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
             .arg("status")
             .output()
             .unwrap();
@@ -305,6 +329,7 @@ mod tests {
             .arg(temp.path())
             .arg("--database-url")
             .arg(&db_url)
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
             .arg("inspect")
             .output()
             .unwrap();
@@ -325,6 +350,7 @@ mod tests {
             .arg(temp.path())
             .arg("--database-url")
             .arg(&db_url)
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
             .args(["run", "inspect-repo"])
             .output()
             .unwrap();

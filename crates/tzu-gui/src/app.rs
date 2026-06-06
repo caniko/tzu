@@ -87,6 +87,28 @@ fn Workbench() -> impl IntoView {
                     </div>
                 </section>
 
+                <section class="section">
+                    <div class="section-title">
+                        <SquareTerminal size=16/>
+                        <span>"Context"</span>
+                    </div>
+                    <textarea
+                        id="context-roots-input"
+                        class="context-roots-input"
+                        name="context-roots"
+                        rows="4"
+                        spellcheck="false"
+                        placeholder="Local project paths"
+                    ></textarea>
+                    <label class="check-row">
+                        <input id="include-nested-contexts" type="checkbox"/>
+                        <span>"Descend nested repositories"</span>
+                    </label>
+                    <div id="discovered-projects" class="discovered-projects muted">
+                        "No configured projects."
+                    </div>
+                </section>
+
                 <section class="section grow">
                     <div class="section-title">
                         <Activity size=16/>
@@ -114,6 +136,14 @@ fn Workbench() -> impl IntoView {
 
                 <form id="plan-form" class="plan-form">
                     <input id="goal-input" name="goal" type="text" autocomplete="off" placeholder="Enter a goal"/>
+                    <div
+                        id="project-suggestion"
+                        class="project-suggestion hidden"
+                        aria-live="polite"
+                    >
+                        <span id="project-suggestion-text">""</span>
+                        <kbd>"Ctrl+Space"</kbd>
+                    </div>
                     <button type="submit">
                         <CircleCheck size=17/>
                         <span>"Plan"</span>
@@ -162,6 +192,36 @@ fn Workbench() -> impl IntoView {
                 </section>
             </section>
         </main>
+        <div id="error-dialog" class="error-dialog hidden" aria-hidden="true">
+            <div class="error-dialog-backdrop" id="error-dialog-backdrop"></div>
+            <section
+                class="error-dialog-panel"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="error-dialog-title"
+                tabindex="-1"
+            >
+                <header class="error-dialog-header">
+                    <div>
+                        <div class="eyebrow">"Error details"</div>
+                        <h2 id="error-dialog-title">"Backend request failed"</h2>
+                    </div>
+                    <button
+                        class="icon-btn error-dialog-close"
+                        id="error-dialog-close"
+                        type="button"
+                        aria-label="Close error details"
+                        title="Close"
+                    >
+                        "X"
+                    </button>
+                </header>
+                <div id="error-dialog-explainer" class="error-explainer">
+                    "No error details are available."
+                </div>
+                <pre id="error-dialog-logs" class="error-logs">"No logs captured."</pre>
+            </section>
+        </div>
     }
 }
 

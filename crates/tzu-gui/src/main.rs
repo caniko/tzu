@@ -10,6 +10,8 @@ use clap::Parser;
 #[cfg(feature = "ssr")]
 use leptos::config::get_configuration;
 #[cfg(feature = "ssr")]
+use tzu_config::load_config;
+#[cfg(feature = "ssr")]
 use tzu_gui::server::{GuiConfig, build_state, router};
 
 #[cfg(feature = "ssr")]
@@ -17,12 +19,12 @@ use tzu_gui::server::{GuiConfig, build_state, router};
 #[command(name = "tzu-gui")]
 #[command(about = "Local Leptos GUI for the tzu planning harness")]
 struct Cli {
-    #[arg(long, default_value = "127.0.0.1")]
-    host: IpAddr,
-    #[arg(long, default_value_t = 7070)]
-    port: u16,
-    #[arg(long, default_value = ".")]
-    project_root: PathBuf,
+    #[arg(long)]
+    host: Option<IpAddr>,
+    #[arg(long)]
+    port: Option<u16>,
+    #[arg(long)]
+    project_root: Option<PathBuf>,
     #[arg(long, env = "TZU_DATABASE_URL")]
     database_url: Option<String>,
 }
@@ -36,10 +38,20 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let app_config = load_config()?;
     let config = GuiConfig {
-        host: cli.host,
-        port: cli.port,
-        project_root: cli.project_root,
+        host: cli.host.unwrap_or_else(|| {
+            app_config
+                .gui
+                .host
+                .parse()
+                .unwrap_or_else(|_| "127.0.0.1".parse().expect("default GUI host is valid"))
+        }),
+        port: cli.port.unwrap_or(app_config.gui.port),
+        project_root: cli
+            .project_root
+            .or_else(|| app_config.projects_directory.clone())
+            .unwrap_or_else(|| PathBuf::from(".")),
         database_url: cli.database_url,
     };
     let mut leptos_options = leptos_options()?;

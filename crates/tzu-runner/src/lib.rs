@@ -11,11 +11,11 @@ use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use tzu_acp::{CodexAcpConfig, CodexAcpProcess, RejectingPermissionHandler};
 use tzu_core::{
-    CodingDomainAdapter, DomainKind, GenericDomainAdapter, HarnessPlanMetadata, HarnessPlanner,
-    Planner, PlanningRun, ProjectState, RunReport, TaskStatus, ordered_tasks,
-    static_validator_outcome, validate_plan,
+    CodingContextRootSummary, CodingContextSummary, CodingDomainAdapter, ContextTraversalSummary,
+    DomainKind, GenericDomainAdapter, HarnessPlanMetadata, HarnessPlanner, Planner, PlanningRun,
+    ProjectState, RunReport, TaskStatus, ordered_tasks, static_validator_outcome, validate_plan,
 };
-use tzu_repo::{RepoState, inspect_repo};
+use tzu_repo::{InspectOptions, ProjectContextSnapshot, RepoState, inspect_context, inspect_repo};
 
 const STATE_ID: &str = "project";
 const ACTOR_MAILBOX_CAPACITY: usize = 32;
@@ -104,6 +104,8 @@ impl thespis::Message for Status {
 pub struct CreatePlan {
     pub goal: String,
     pub domain: PlanningDomain,
+    pub context_roots: Vec<PathBuf>,
+    pub include_nested_contexts: bool,
 }
 
 impl thespis::Message for CreatePlan {
@@ -157,10 +159,23 @@ impl TzuRunner {
         goal: &str,
         domain: PlanningDomain,
     ) -> Result<ProjectState, RunnerError> {
+        self.plan_with_context(goal, domain, Vec::new(), false)
+            .await
+    }
+
+    pub async fn plan_with_context(
+        &self,
+        goal: &str,
+        domain: PlanningDomain,
+        context_roots: Vec<PathBuf>,
+        include_nested_contexts: bool,
+    ) -> Result<ProjectState, RunnerError> {
         self.actor
             .create_plan(CreatePlan {
                 goal: goal.to_string(),
                 domain,
+                context_roots,
+                include_nested_contexts,
             })
             .await
     }
@@ -325,18 +340,23 @@ impl RunnerActor {
     }
 
     async fn create_plan(&self, msg: CreatePlan) -> Result<ProjectState, RunnerError> {
+        let context_snapshot = if msg.domain == PlanningDomain::Coding {
+            Some(self.context_snapshot(&msg).await?)
+        } else {
+            None
+        };
         let plan = match msg.domain {
             PlanningDomain::Generic => {
                 let planner = HarnessPlanner::new(GenericDomainAdapter);
                 planner.create_plan(&msg.goal).await?
             }
             PlanningDomain::Coding => {
-                let repo = self.repo.inspect().await?;
+                let snapshot = context_snapshot
+                    .as_ref()
+                    .expect("coding context snapshot exists for coding plan");
                 let planner = HarnessPlanner::new(CodingDomainAdapter {
                     project_root: self.root.display().to_string(),
-                    repo_dirty: repo.dirty,
-                    repo_head: repo.head,
-                    file_count: repo.files.len(),
+                    context: coding_context_summary(snapshot),
                 });
                 planner.create_plan(&msg.goal).await?
             }
@@ -372,9 +392,34 @@ impl RunnerActor {
                 .as_ref()
                 .and_then(|plan| plan.harness.clone()),
         ) {
+            let run_id = run.id.clone();
             self.store.save_planning_artifacts(run, harness).await?;
+            if let Some(snapshot) = context_snapshot {
+                self.store.save_context_snapshot(&run_id, snapshot).await?;
+            }
         }
         Ok(state)
+    }
+
+    async fn context_snapshot(
+        &self,
+        msg: &CreatePlan,
+    ) -> Result<ProjectContextSnapshot, RunnerError> {
+        let context_roots = if msg.context_roots.is_empty() {
+            vec![self.root.clone()]
+        } else {
+            msg.context_roots.clone()
+        };
+        inspect_context(
+            &self.root,
+            InspectOptions {
+                context_roots,
+                include_nested_contexts: msg.include_nested_contexts,
+                ..InspectOptions::default()
+            },
+        )
+        .await
+        .map_err(RunnerError::Repo)
     }
 
     async fn run_task(&self, msg: RunTask) -> Result<TzuRunReport, RunnerError> {
@@ -476,6 +521,20 @@ impl StoreActorHandle {
         .await
     }
 
+    async fn save_context_snapshot(
+        &self,
+        run_id: &str,
+        snapshot: ProjectContextSnapshot,
+    ) -> Result<(), RunnerError> {
+        let run_id = run_id.to_string();
+        self.call(|reply| StoreCommand::SaveContextSnapshot {
+            run_id,
+            snapshot: Box::new(snapshot),
+            reply,
+        })
+        .await
+    }
+
     async fn call<T>(
         &self,
         build: impl FnOnce(oneshot::Sender<Result<T, RunnerError>>) -> StoreCommand,
@@ -505,6 +564,11 @@ enum StoreCommand {
         harness: Box<HarnessPlanMetadata>,
         reply: oneshot::Sender<Result<(), RunnerError>>,
     },
+    SaveContextSnapshot {
+        run_id: String,
+        snapshot: Box<ProjectContextSnapshot>,
+        reply: oneshot::Sender<Result<(), RunnerError>>,
+    },
 }
 
 #[derive(thespis::Actor)]
@@ -529,6 +593,13 @@ impl StoreActor {
                     reply,
                 } => {
                     let _ = reply.send(self.store.save_planning_artifacts(&run, &harness).await);
+                }
+                StoreCommand::SaveContextSnapshot {
+                    run_id,
+                    snapshot,
+                    reply,
+                } => {
+                    let _ = reply.send(self.store.save_context_snapshot(&run_id, &snapshot).await);
                 }
             }
         }
@@ -777,6 +848,16 @@ impl Store {
                 )
                 .execute(pool)
                 .await?;
+                sqlx::query(
+                    "CREATE TABLE IF NOT EXISTS context_snapshots (
+                        id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL,
+                        snapshot_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )",
+                )
+                .execute(pool)
+                .await?;
             }
             Self::Postgres(pool) => {
                 sqlx::query(
@@ -843,6 +924,16 @@ impl Store {
                         id TEXT PRIMARY KEY,
                         run_id TEXT NOT NULL,
                         validator_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )",
+                )
+                .execute(pool)
+                .await?;
+                sqlx::query(
+                    "CREATE TABLE IF NOT EXISTS context_snapshots (
+                        id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL,
+                        snapshot_json TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     )",
                 )
@@ -1026,10 +1117,96 @@ impl Store {
         }
         Ok(())
     }
+
+    async fn save_context_snapshot(
+        &self,
+        run_id: &str,
+        snapshot: &ProjectContextSnapshot,
+    ) -> Result<(), RunnerError> {
+        let updated_at = now_unix_secs().to_string();
+        let snapshot_json = serde_json::to_string_pretty(snapshot)?;
+        match self {
+            Self::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO context_snapshots (id, run_id, snapshot_json, updated_at)
+                     VALUES (?, ?, ?, ?)
+                     ON CONFLICT(id) DO UPDATE SET
+                        run_id = excluded.run_id,
+                        snapshot_json = excluded.snapshot_json,
+                        updated_at = excluded.updated_at",
+                )
+                .bind(&snapshot.id)
+                .bind(run_id)
+                .bind(snapshot_json)
+                .bind(updated_at)
+                .execute(pool)
+                .await?;
+            }
+            Self::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO context_snapshots (id, run_id, snapshot_json, updated_at)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT(id) DO UPDATE SET
+                        run_id = excluded.run_id,
+                        snapshot_json = excluded.snapshot_json,
+                        updated_at = excluded.updated_at",
+                )
+                .bind(&snapshot.id)
+                .bind(run_id)
+                .bind(snapshot_json)
+                .bind(updated_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 fn sqlite_path(url: &str) -> PathBuf {
     PathBuf::from(url.trim_start_matches("sqlite://"))
+}
+
+fn coding_context_summary(snapshot: &ProjectContextSnapshot) -> CodingContextSummary {
+    CodingContextSummary {
+        snapshot_id: snapshot.id.clone(),
+        summary: snapshot.summary.clone(),
+        roots: snapshot
+            .roots
+            .iter()
+            .map(|root| CodingContextRootSummary {
+                id: root.id.clone(),
+                root: root.root.display().to_string(),
+                head: root.head.clone(),
+                dirty: root.dirty,
+                file_count: root.files.len(),
+                languages: root
+                    .languages
+                    .iter()
+                    .map(|(language, count)| format!("{language}={count}"))
+                    .collect(),
+                manifests: root
+                    .manifests
+                    .iter()
+                    .map(|doc| doc.path.display().to_string())
+                    .collect(),
+                docs: root
+                    .docs
+                    .iter()
+                    .map(|doc| doc.path.display().to_string())
+                    .collect(),
+                nested_boundaries: root.boundaries.len(),
+                traversal: ContextTraversalSummary {
+                    traversed_entries: root.traversal.traversed_entries,
+                    indexed_files: root.traversal.indexed_files,
+                    skipped_ignored_entries: root.traversal.skipped_ignored_entries,
+                    walk_errors: root.traversal.walk_errors,
+                    skipped_nested_contexts: root.traversal.skipped_nested_contexts,
+                    skipped_after_limit: root.traversal.skipped_after_limit,
+                },
+            })
+            .collect(),
+    }
 }
 
 async fn insert_planning_run_sqlite(
@@ -1408,6 +1585,82 @@ mod tests {
         assert_eq!(outcome.status, tzu_core::ValidationOutcomeStatus::Passed);
         assert_eq!(outcome.reward, tzu_core::ValidationRewardBucket::Partial);
         assert!(!outcome.candidate_hash.is_empty());
+    }
+
+    #[tokio::test]
+    async fn coding_plan_persists_multi_root_context_snapshot() {
+        let state_root = tempfile::tempdir().unwrap();
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("Cargo.toml"), "[package]\nname='one'\n").unwrap();
+        std::fs::write(first.path().join("README.md"), "# One\n").unwrap();
+        std::fs::write(second.path().join("flake.nix"), "{ outputs = _: {}; }\n").unwrap();
+
+        let url = format!(
+            "sqlite://{}",
+            state_root.path().join("state.sqlite").display()
+        );
+        let runner = TzuRunner::connect(state_root.path(), &url).await.unwrap();
+        let planned = runner
+            .plan_with_context(
+                "add project context",
+                PlanningDomain::Coding,
+                vec![first.path().to_path_buf(), second.path().to_path_buf()],
+                false,
+            )
+            .await
+            .unwrap();
+
+        let plan = planned.current_plan.as_ref().unwrap();
+        let harness = plan.harness.as_ref().unwrap();
+        assert!(
+            harness
+                .problem_spec
+                .evidence
+                .iter()
+                .any(|evidence| evidence.source == "project-context:context-root-1")
+        );
+        assert!(
+            harness
+                .problem_spec
+                .evidence
+                .iter()
+                .any(|evidence| evidence.source == "project-context:context-root-2")
+        );
+        assert!(
+            harness
+                .problem_spec
+                .evidence
+                .iter()
+                .any(|evidence| evidence.summary.contains("Cargo.toml"))
+        );
+        assert!(
+            harness
+                .problem_spec
+                .evidence
+                .iter()
+                .any(|evidence| evidence.summary.contains("flake.nix"))
+        );
+
+        let run = planned.planning_runs.last().unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        let row = sqlx::query(
+            "SELECT snapshot_json FROM context_snapshots WHERE run_id = ? ORDER BY id LIMIT 1",
+        )
+        .bind(&run.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let snapshot_json: String = row.get("snapshot_json");
+        let snapshot: tzu_repo::ProjectContextSnapshot =
+            serde_json::from_str(&snapshot_json).unwrap();
+        assert_eq!(snapshot.roots.len(), 2);
+        assert_eq!(snapshot.roots[0].files.len(), 2);
+        assert_eq!(snapshot.roots[1].files.len(), 1);
     }
 
     #[tokio::test]
