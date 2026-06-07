@@ -51,6 +51,10 @@
             echo tzu-gui "$@"
           '';
           projectsDirectory = /home/tester/Projects;
+          projectsDirectories = [
+            /home/tester/MoreProjects
+            /home/tester/GameDev
+          ];
           includeNestedContexts = true;
           databaseUrl = "sqlite:///home/tester/.local/state/tzu/state.sqlite";
           gui = {
@@ -69,6 +73,7 @@
 in
   pkgs.runCommand "tzu-home-manager-module-test" {} ''
     grep -q 'projects_directory = "/home/tester/Projects"' ${pkgs.writeText "config.toml" configText}
+    grep -q 'projects_directories = \["/home/tester/MoreProjects","/home/tester/GameDev"\]' ${pkgs.writeText "config-list.toml" configText}
     grep -q 'include_nested_contexts = true' ${pkgs.writeText "config2.toml" configText}
     test "${service.Environment}" = "TZU_DATABASE_URL=sqlite:///home/tester/.local/state/tzu/state.sqlite"
     touch "$out"

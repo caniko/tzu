@@ -4,9 +4,7 @@ use leptos_router::{
     StaticSegment,
     components::{Route, Router, Routes},
 };
-use lucide_leptos::{
-    Activity, Circle, CircleCheck, Database, GitBranch, Play, RefreshCw, SquareTerminal,
-};
+use lucide_leptos::{Activity, Circle, CircleCheck, Database, Play, RefreshCw, Settings2};
 
 #[cfg(feature = "ssr")]
 use leptos::config::LeptosOptions;
@@ -61,54 +59,6 @@ fn Workbench() -> impl IntoView {
                     <span class="pill" id="health-pill">"booting"</span>
                 </div>
 
-                <section class="section">
-                    <div class="section-title">
-                        <SquareTerminal size=16/>
-                        <span>"Project"</span>
-                    </div>
-                    <div class="meta-row">
-                        <span class="meta-label">"Root"</span>
-                        <span class="mono truncate" id="project-root">"loading"</span>
-                    </div>
-                    <div class="meta-row">
-                        <span class="meta-label">"DB"</span>
-                        <span class="mono truncate" id="backend-status">"checking"</span>
-                    </div>
-                </section>
-
-                <section class="section">
-                    <div class="section-title">
-                        <GitBranch size=16/>
-                        <span>"Domain"</span>
-                    </div>
-                    <div class="segmented" role="radiogroup" aria-label="Planning domain">
-                        <label><input type="radio" name="domain" value="generic" checked/>"Generic"</label>
-                        <label><input type="radio" name="domain" value="coding"/>"Coding"</label>
-                    </div>
-                </section>
-
-                <section class="section">
-                    <div class="section-title">
-                        <SquareTerminal size=16/>
-                        <span>"Context"</span>
-                    </div>
-                    <textarea
-                        id="context-roots-input"
-                        class="context-roots-input"
-                        name="context-roots"
-                        rows="4"
-                        spellcheck="false"
-                        placeholder="Local project paths"
-                    ></textarea>
-                    <label class="check-row">
-                        <input id="include-nested-contexts" type="checkbox"/>
-                        <span>"Descend nested repositories"</span>
-                    </label>
-                    <div id="discovered-projects" class="discovered-projects muted">
-                        "No configured projects."
-                    </div>
-                </section>
-
                 <section class="section grow">
                     <div class="section-title">
                         <Activity size=16/>
@@ -131,18 +81,33 @@ fn Workbench() -> impl IntoView {
                         <button class="icon-btn" id="init-btn" type="button" aria-label="Initialize state" title="Initialize state">
                             <Database size=18/>
                         </button>
+                        <button class="icon-btn" id="settings-btn" type="button" aria-label="Inspect configuration" title="Inspect configuration">
+                            <Settings2 size=18/>
+                        </button>
                     </div>
                 </header>
 
                 <form id="plan-form" class="plan-form">
-                    <input id="goal-input" name="goal" type="text" autocomplete="off" placeholder="Enter a goal"/>
                     <div
-                        id="project-suggestion"
-                        class="project-suggestion hidden"
+                        id="goal-input"
+                        class="goal-editor"
+                        contenteditable="true"
+                        role="textbox"
+                        aria-label="Goal"
+                        data-placeholder="Enter a goal"
+                        spellcheck="false"
+                    ></div>
+                    <input id="goal-value" name="goal" type="hidden"/>
+                    <div class="domain-inline segmented" role="radiogroup" aria-label="Planning domain">
+                        <label><input type="radio" name="domain" value="generic" checked/>"Generic"</label>
+                        <label><input type="radio" name="domain" value="coding"/>"Coding"</label>
+                    </div>
+                    <div
+                        id="mention-suggestion"
+                        class="mention-suggestion hidden"
                         aria-live="polite"
                     >
-                        <span id="project-suggestion-text">""</span>
-                        <kbd>"Ctrl+Space"</kbd>
+                        <div id="mention-suggestion-list" class="mention-suggestion-list"></div>
                     </div>
                     <button type="submit">
                         <CircleCheck size=17/>
@@ -192,6 +157,49 @@ fn Workbench() -> impl IntoView {
                 </section>
             </section>
         </main>
+        <div id="toast-region" class="toast-region" aria-live="polite"></div>
+        <div id="settings-dialog" class="settings-dialog hidden" aria-hidden="true">
+            <div class="settings-dialog-backdrop" id="settings-dialog-backdrop"></div>
+            <section
+                class="settings-dialog-panel"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="settings-dialog-title"
+                tabindex="-1"
+            >
+                <header class="settings-dialog-header">
+                    <div>
+                        <div class="eyebrow">"Configuration"</div>
+                        <h2 id="settings-dialog-title">"tzu settings"</h2>
+                    </div>
+                    <button
+                        class="icon-btn settings-dialog-close"
+                        id="settings-dialog-close"
+                        type="button"
+                        aria-label="Close configuration"
+                        title="Close"
+                    >
+                        "X"
+                    </button>
+                </header>
+                <dl class="settings-grid">
+                    <dt>"Project root"</dt>
+                    <dd class="mono truncate" id="settings-project-root">"loading"</dd>
+                    <dt>"Backend"</dt>
+                    <dd class="mono truncate" id="backend-status">"checking"</dd>
+                    <dt>"Config path"</dt>
+                    <dd class="mono truncate" id="settings-config-path">"not configured"</dd>
+                    <dt>"Project discovery"</dt>
+                    <dd class="mono truncate" id="settings-projects-directories">"not configured"</dd>
+                    <dt>"Nested repositories"</dt>
+                    <dd class="mono truncate" id="settings-include-nested">"false"</dd>
+                    <dt>"GUI"</dt>
+                    <dd class="mono truncate" id="settings-gui">"loading"</dd>
+                    <dt>"Discovered projects"</dt>
+                    <dd id="settings-discovered-projects" class="settings-list muted">"None"</dd>
+                </dl>
+            </section>
+        </div>
         <div id="error-dialog" class="error-dialog hidden" aria-hidden="true">
             <div class="error-dialog-backdrop" id="error-dialog-backdrop"></div>
             <section

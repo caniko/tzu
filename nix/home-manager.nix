@@ -7,13 +7,23 @@ self: {
   cfg = config.programs.tzu;
   package = cfg.package;
   tomlString = value: builtins.toJSON (toString value);
+  tomlStringList = values: builtins.toJSON (map toString values);
   tomlBool = value:
     if value
     then "true"
     else "false";
+  projectRoots =
+    lib.optional (cfg.projectsDirectory != null) cfg.projectsDirectory
+    ++ cfg.projectsDirectories;
+  primaryProjectRoot =
+    if cfg.projectsDirectory != null
+    then cfg.projectsDirectory
+    else builtins.head cfg.projectsDirectories;
   configToml = lib.concatStringsSep "\n" (
     lib.optional (cfg.projectsDirectory != null)
     "projects_directory = ${tomlString cfg.projectsDirectory}"
+    ++ lib.optional (cfg.projectsDirectories != [])
+    "projects_directories = ${tomlStringList cfg.projectsDirectories}"
     ++ [
       "include_nested_contexts = ${tomlBool cfg.includeNestedContexts}"
       ""
@@ -38,13 +48,19 @@ in {
     projectsDirectory = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Favorite directory whose direct child projects are discovered by tzu.";
+      description = "Legacy single directory whose direct child projects are discovered by tzu.";
+    };
+
+    projectsDirectories = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [];
+      description = "Directories whose direct child projects are discovered by tzu.";
     };
 
     includeNestedContexts = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Whether context traversal should descend into nested repositories by default.";
+      description = "Whether context traversal and GUI @ folder discovery should descend into nested repositories and submodules by default.";
     };
 
     databaseUrl = lib.mkOption {
@@ -73,8 +89,8 @@ in {
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = !cfg.gui.enable || cfg.projectsDirectory != null;
-        message = "programs.tzu.projectsDirectory must be set when programs.tzu.gui.enable is true.";
+        assertion = !cfg.gui.enable || projectRoots != [];
+        message = "programs.tzu.projectsDirectory or programs.tzu.projectsDirectories must be set when programs.tzu.gui.enable is true.";
       }
     ];
 
@@ -89,7 +105,7 @@ in {
       };
       Service =
         {
-          ExecStart = "${lib.getExe' package "tzu-gui"} --project-root ${lib.escapeShellArg (toString cfg.projectsDirectory)} --host ${lib.escapeShellArg cfg.gui.host} --port ${toString cfg.gui.port}";
+          ExecStart = "${lib.getExe' package "tzu-gui"} --project-root ${lib.escapeShellArg (toString primaryProjectRoot)} --host ${lib.escapeShellArg cfg.gui.host} --port ${toString cfg.gui.port}";
           Restart = "on-failure";
         }
         // lib.optionalAttrs (cfg.databaseUrl != null) {

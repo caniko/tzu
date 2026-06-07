@@ -54,6 +54,14 @@
         inherit src nativeBuildInputs buildInputs;
         strictDeps = true;
       };
+      tzu-dev-config = pkgs.writeShellApplication {
+        name = "tzu-dev-config";
+        runtimeInputs = with pkgs; [git gnused];
+        text = ''
+          root="$(git -C "''${PWD}" rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+          exec "$root/scripts/tzu-dev-config" "$@"
+        '';
+      };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
       package = craneLib.buildPackage (commonArgs // {inherit cargoArtifacts;});
       treefmtEval = treefmt-nix.lib.evalModule pkgs (import ./nix/treefmt.nix);
@@ -91,13 +99,18 @@
             playwright-driver
             pre-commit
             rust-analyzer
+            tzu-dev-config
             wasm-bindgen-cli
           ]
           ++ nativeBuildInputs
           ++ buildInputs
           ++ pre-commit-check.enabledPackages;
         LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
-        shellHook = pre-commit-check.shellHook;
+        shellHook = ''
+          export XDG_CONFIG_HOME="$PWD/.tzu/xdg"
+          export TZU_REQUIRE_CONFIG=true
+          ${pre-commit-check.shellHook}
+        '';
       };
     });
   in

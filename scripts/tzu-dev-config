@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: tzu-dev-config <command>
+
+Commands:
+  init [--force]  Create .tzu/xdg/tzu/config.toml with development defaults.
+  path            Print the active development config path.
+  validate        Validate that tzu can load the active development config.
+USAGE
+}
+
+repo_root() {
+  git -C "${PWD}" rev-parse --show-toplevel 2>/dev/null || pwd -P
+}
+
+config_home() {
+  local root
+  root="$(repo_root)"
+  printf '%s\n' "${XDG_CONFIG_HOME:-${root}/.tzu/xdg}"
+}
+
+config_path() {
+  printf '%s/tzu/config.toml\n' "$(config_home)"
+}
+
+toml_string() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+init_config() {
+  local force=false
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --force)
+        force=true
+        ;;
+      -h|--help)
+        usage
+        return 0
+        ;;
+      *)
+        printf 'unknown init option: %s\n' "$1" >&2
+        usage >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
+
+  local root parent projects_dir path
+  root="$(repo_root)"
+  parent="$(dirname "$root")"
+  if [ -d "$parent" ]; then
+    projects_dir="$parent"
+  else
+    projects_dir="$root"
+  fi
+  if [ ! -d "$projects_dir" ]; then
+    cat >&2 <<EOF
+cannot create dev config: project discovery root does not exist: $projects_dir
+
+Required source: local repository parent or current repository root.
+Upstream producer: git checkout / working tree.
+Regenerate command: cd "$root" && tzu-dev-config init
+Validation command: tzu-dev-config validate
+EOF
+    return 1
+  fi
+
+  path="$(config_path)"
+  mkdir -p "$(dirname "$path")"
+  if [ -e "$path" ] && [ "$force" != true ]; then
+    printf 'refusing to overwrite existing config: %s\n' "$path" >&2
+    printf 'rerun with: tzu-dev-config init --force\n' >&2
+    return 1
+  fi
+
+  cat >"$path" <<EOF
+projects_directory = "$(toml_string "$projects_dir")"
+include_nested_contexts = false
+
+[gui]
+host = "127.0.0.1"
+port = 7070
+enable_service = false
+EOF
+  printf 'wrote %s\n' "$path"
+}
+
+validate_config() {
+  local root path
+  root="$(repo_root)"
+  path="$(config_path)"
+  if [ ! -f "$path" ]; then
+    cat >&2 <<EOF
+missing required development config: $path
+
+Required artifact: repo-local XDG config file.
+Upstream producer: tzu-dev-config init.
+Regenerate command: tzu-dev-config init
+Validation command: tzu-dev-config validate
+EOF
+    return 1
+  fi
+
+  (
+    cd "$root"
+    export XDG_CONFIG_HOME
+    XDG_CONFIG_HOME="$(config_home)"
+    export TZU_REQUIRE_CONFIG=true
+    if [ -z "${TZU_DATABASE_URL:-}" ]; then
+      export TZU_DATABASE_URL="sqlite://${root}/.tzu/state.sqlite"
+    fi
+    cargo run --quiet -p tzu-cli --bin tzu -- --project-root "$root" status >/dev/null
+  )
+  printf 'validated %s\n' "$path"
+}
+
+main() {
+  local command="${1:-}"
+  if [ "$#" -gt 0 ]; then
+    shift
+  fi
+  case "$command" in
+    init)
+      init_config "$@"
+      ;;
+    path)
+      config_path
+      ;;
+    validate)
+      validate_config
+      ;;
+    -h|--help|"")
+      usage
+      ;;
+    *)
+      printf 'unknown command: %s\n' "$command" >&2
+      usage >&2
+      return 2
+      ;;
+  esac
+}
+
+main "$@"
