@@ -1,6 +1,6 @@
 [package]
 name = "tzu-acp"
-description = "ACP stdio JSON-RPC client and codex-acp launcher for tzu"
+description = "ACP stdio JSON-RPC client and agent adapter launcher for tzu"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

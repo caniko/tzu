@@ -9,11 +9,12 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{PgPool, Row, SqlitePool};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use tzu_acp::{CodexAcpConfig, CodexAcpProcess, RejectingPermissionHandler};
+use tzu_acp::{AcpAgentConfig, AcpAgentProcess, RejectingPermissionHandler};
 use tzu_core::{
     CodingContextRootSummary, CodingContextSummary, CodingDomainAdapter, ContextTraversalSummary,
     DomainKind, GenericDomainAdapter, HarnessPlanMetadata, HarnessPlanner, Planner, PlanningRun,
-    ProjectState, RunReport, TaskStatus, ordered_tasks, static_validator_outcome, validate_plan,
+    ProjectState, RunReport, TaskStatus, inspect_goal_prompt, ordered_tasks,
+    static_validator_outcome, validate_plan,
 };
 use tzu_repo::{InspectOptions, ProjectContextSnapshot, RepoState, inspect_context, inspect_repo};
 
@@ -103,6 +104,7 @@ impl thespis::Message for Status {
 #[derive(Debug)]
 pub struct CreatePlan {
     pub goal: String,
+    pub planning_goal: Option<String>,
     pub domain: PlanningDomain,
     pub context_roots: Vec<PathBuf>,
     pub include_nested_contexts: bool,
@@ -173,6 +175,7 @@ impl TzuRunner {
         self.actor
             .create_plan(CreatePlan {
                 goal: goal.to_string(),
+                planning_goal: None,
                 domain,
                 context_roots,
                 include_nested_contexts,
@@ -340,15 +343,22 @@ impl RunnerActor {
     }
 
     async fn create_plan(&self, msg: CreatePlan) -> Result<ProjectState, RunnerError> {
+        let planning_goal = msg.planning_goal.as_deref().unwrap_or(&msg.goal);
+        let prompt_inspection = inspect_goal_prompt(planning_goal, msg.domain.kind());
+        if prompt_inspection.needs_improvement() {
+            return Err(
+                tzu_core::PlanError::PromptNeedsImprovement(Box::new(prompt_inspection)).into(),
+            );
+        }
         let context_snapshot = if msg.domain == PlanningDomain::Coding {
             Some(self.context_snapshot(&msg).await?)
         } else {
             None
         };
-        let plan = match msg.domain {
+        let mut plan = match msg.domain {
             PlanningDomain::Generic => {
                 let planner = HarnessPlanner::new(GenericDomainAdapter);
-                planner.create_plan(&msg.goal).await?
+                planner.create_plan(planning_goal).await?
             }
             PlanningDomain::Coding => {
                 let snapshot = context_snapshot
@@ -358,9 +368,10 @@ impl RunnerActor {
                     project_root: self.root.display().to_string(),
                     context: coding_context_summary(snapshot),
                 });
-                planner.create_plan(&msg.goal).await?
+                planner.create_plan(planning_goal).await?
             }
         };
+        plan.goal = msg.goal.clone();
         validate_plan(&plan)?;
 
         let mut state = self
@@ -704,7 +715,7 @@ impl AcpActor {
     }
 
     async fn prompt(&self, prompt: &str) -> Result<tzu_acp::AcpRunOutput, RunnerError> {
-        let mut process = CodexAcpProcess::spawn(&CodexAcpConfig::from_env(&self.root)).await?;
+        let mut process = AcpAgentProcess::spawn(&AcpAgentConfig::from_env(&self.root)).await?;
         let _ = process.initialize().await?;
         let mut permissions = RejectingPermissionHandler;
         process
@@ -1497,6 +1508,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_goal_prompt_does_not_mutate_state_or_artifacts() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join("state.sqlite");
+        let url = format!("sqlite://{}", db.display());
+        let runner = TzuRunner::connect(temp.path(), &url).await.unwrap();
+
+        runner.init().await.unwrap();
+        let error = runner
+            .plan_with_context(
+                "TODO",
+                PlanningDomain::Coding,
+                vec![temp.path().to_path_buf()],
+                false,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunnerError::Planning(tzu_core::PlanError::PromptNeedsImprovement(_))
+        ));
+        let state = runner.status().await.unwrap();
+        assert!(state.current_plan.is_none());
+        assert!(state.planning_runs.is_empty());
+
+        let pool = SqlitePoolOptions::new().connect(&url).await.unwrap();
+        for table in [
+            "planning_runs",
+            "plan_candidates",
+            "plan_matches",
+            "context_snapshots",
+        ] {
+            let query = format!("SELECT COUNT(*) AS count FROM {table}");
+            let count: i64 = sqlx::query(&query)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .get("count");
+            assert_eq!(count, 0, "{table} should stay empty");
+        }
+    }
+
+    #[tokio::test]
     async fn harness_candidates_persist_in_sqlite_side_tables() {
         let temp = tempfile::tempdir().unwrap();
         let db = temp.path().join("state.sqlite");
@@ -1661,6 +1715,38 @@ mod tests {
         assert_eq!(snapshot.roots.len(), 2);
         assert_eq!(snapshot.roots[0].files.len(), 2);
         assert_eq!(snapshot.roots[1].files.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn planning_goal_can_differ_from_display_goal() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname='fixture'\n",
+        )
+        .unwrap();
+        let url = format!("sqlite://{}", temp.path().join("state.sqlite").display());
+        let runner = TzuRunner::connect(temp.path(), &url).await.unwrap();
+
+        let planned = runner
+            .actor()
+            .create_plan(CreatePlan {
+                goal: "update @fixture".to_string(),
+                planning_goal: Some(format!("update @{}", temp.path().display())),
+                domain: PlanningDomain::Coding,
+                context_roots: vec![temp.path().to_path_buf()],
+                include_nested_contexts: false,
+            })
+            .await
+            .unwrap();
+
+        let plan = planned.current_plan.as_ref().unwrap();
+        assert_eq!(plan.goal, "update @fixture");
+        let harness = plan.harness.as_ref().unwrap();
+        assert_eq!(
+            harness.problem_spec.goal,
+            format!("update @{}", temp.path().display())
+        );
     }
 
     #[tokio::test]

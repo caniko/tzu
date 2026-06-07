@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use tzu_config::load_config;
 use tzu_core::{
-    DomainKind, FrontierDiscardReason, PlanSketch, ProjectState, TaskStatus, ordered_tasks,
+    DomainKind, FrontierDiscardReason, PlanError, PlanSketch, ProjectState, PromptInspection,
+    TaskStatus, ordered_tasks,
 };
 use tzu_runner::{PlanningDomain, RunMode, TzuRunner, default_database_url};
 
@@ -89,9 +90,22 @@ async fn run(cli: Cli) -> Result<()> {
             include_nested_contexts,
         } => {
             let include_nested_contexts = include_nested_contexts || config.include_nested_contexts;
-            let state = runner
+            let state = match runner
                 .plan_with_context(&goal, domain.into(), context_roots, include_nested_contexts)
-                .await?;
+                .await
+            {
+                Ok(state) => state,
+                Err(tzu_runner::RunnerError::Planning(PlanError::PromptNeedsImprovement(
+                    inspection,
+                ))) => {
+                    print_prompt_inspection(&inspection);
+                    return Err(tzu_runner::RunnerError::Planning(
+                        PlanError::PromptNeedsImprovement(inspection),
+                    )
+                    .into());
+                }
+                Err(error) => return Err(error.into()),
+            };
             print_status(&state)?;
         }
         Command::Run { task_id } => {
@@ -109,6 +123,22 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_prompt_inspection(inspection: &PromptInspection) {
+    eprintln!("Goal prompt needs improvement before planning.");
+    for finding in &inspection.findings {
+        eprintln!("- {}: {}", finding.code, finding.message);
+    }
+    if let Some(suggestion) = &inspection.suggestion {
+        eprintln!("Recommended model: {}", suggestion.model);
+        eprintln!(
+            "Recommended reasoning_effort: {}",
+            suggestion.reasoning_effort
+        );
+        eprintln!("Rationale: {}", suggestion.rationale);
+        eprintln!("Prompt guidance: {}", suggestion.improved_prompt_guidance);
+    }
 }
 
 fn print_status(state: &ProjectState) -> Result<()> {
@@ -280,6 +310,21 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&init.stderr)
         );
+
+        let bad_plan = ProcessCommand::new(&bin)
+            .arg("--project-root")
+            .arg(temp.path())
+            .arg("--database-url")
+            .arg(&db_url)
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
+            .args(["plan", "TODO"])
+            .output()
+            .unwrap();
+        assert!(!bad_plan.status.success());
+        let bad_plan_stderr = String::from_utf8_lossy(&bad_plan.stderr);
+        assert!(bad_plan_stderr.contains("Goal prompt needs improvement before planning."));
+        assert!(bad_plan_stderr.contains("Recommended model: gpt-5.5"));
+        assert!(bad_plan_stderr.contains("Recommended reasoning_effort: medium"));
 
         let plan = ProcessCommand::new(&bin)
             .arg("--project-root")

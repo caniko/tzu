@@ -20,7 +20,7 @@ pub mod protocol;
 
 #[derive(Debug, Error)]
 pub enum AcpError {
-    #[error("spawn codex-acp: {0}")]
+    #[error("spawn ACP agent: {0}")]
     Spawn(String),
     #[error("json-rpc transport: {0}")]
     Transport(String),
@@ -39,25 +39,67 @@ pub enum AcpError {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpAgentBackend {
+    Codex,
+    DeepSeek,
+}
+
+impl AcpAgentBackend {
+    #[must_use]
+    pub fn from_env() -> Self {
+        match env::var("TZU_AGENT_BACKEND") {
+            Ok(value) if matches!(value.as_str(), "deepseek" | "deepseek-v4") => Self::DeepSeek,
+            _ => Self::Codex,
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::DeepSeek => "deepseek",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct CodexAcpConfig {
+pub struct AcpAgentConfig {
+    pub backend: AcpAgentBackend,
     pub binary: PathBuf,
+    pub args: Vec<String>,
     pub cwd: PathBuf,
     pub timeout: Duration,
 }
 
-impl CodexAcpConfig {
+impl AcpAgentConfig {
     #[must_use]
     pub fn from_env(cwd: impl Into<PathBuf>) -> Self {
-        Self {
-            binary: env::var_os("TZU_CODEX_ACP_BIN")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("codex-acp")),
-            cwd: cwd.into(),
-            timeout: Duration::from_secs(120),
+        let backend = AcpAgentBackend::from_env();
+        match backend {
+            AcpAgentBackend::Codex => Self {
+                backend,
+                binary: env::var_os("TZU_CODEX_ACP_BIN")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("codex-acp")),
+                args: Vec::new(),
+                cwd: cwd.into(),
+                timeout: Duration::from_secs(120),
+            },
+            AcpAgentBackend::DeepSeek => Self {
+                backend,
+                binary: env::var_os("TZU_DEEPSEEK_ACP_BIN")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("deepseek-acp-adapter")),
+                args: vec!["serve".to_string()],
+                cwd: cwd.into(),
+                timeout: Duration::from_secs(120),
+            },
         }
     }
 }
+
+pub type CodexAcpConfig = AcpAgentConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionDecision {
@@ -99,14 +141,15 @@ pub struct AcpRunOutput {
     pub events: Vec<AcpEvent>,
 }
 
-pub struct CodexAcpProcess {
+pub struct AcpAgentProcess {
     child: Child,
     client: AcpClient<BufReader<ChildStdout>, ChildStdin>,
 }
 
-impl CodexAcpProcess {
-    pub async fn spawn(config: &CodexAcpConfig) -> Result<Self, AcpError> {
+impl AcpAgentProcess {
+    pub async fn spawn(config: &AcpAgentConfig) -> Result<Self, AcpError> {
         let mut child = Command::new(&config.binary)
+            .args(&config.args)
             .current_dir(&config.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -117,11 +160,11 @@ impl CodexAcpProcess {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| AcpError::Spawn("codex-acp stdin unavailable".to_string()))?;
+            .ok_or_else(|| AcpError::Spawn("ACP agent stdin unavailable".to_string()))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| AcpError::Spawn("codex-acp stdout unavailable".to_string()))?;
+            .ok_or_else(|| AcpError::Spawn("ACP agent stdout unavailable".to_string()))?;
 
         Ok(Self {
             child,
@@ -143,11 +186,13 @@ impl CodexAcpProcess {
     }
 }
 
-impl Drop for CodexAcpProcess {
+impl Drop for AcpAgentProcess {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
     }
 }
+
+pub type CodexAcpProcess = AcpAgentProcess;
 
 pub struct AcpClient<R, W> {
     reader: R,
@@ -413,10 +458,16 @@ fn collect_notification(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::{Mutex as StdMutex, OnceLock};
 
     use tokio::sync::Mutex;
 
     use super::*;
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| StdMutex::new(())).lock().unwrap()
+    }
 
     #[tokio::test]
     async fn jsonrpc_message_framing_round_trips_one_line() {
@@ -442,6 +493,47 @@ mod tests {
             read_jsonrpc_message(&mut reader).await,
             Err(AcpError::Transport(_))
         ));
+    }
+
+    #[test]
+    fn default_agent_config_launches_codex_acp() {
+        let _guard = env_lock();
+        unsafe {
+            env::remove_var("TZU_AGENT_BACKEND");
+            env::remove_var("TZU_CODEX_ACP_BIN");
+            env::remove_var("TZU_DEEPSEEK_ACP_BIN");
+        }
+
+        let config = AcpAgentConfig::from_env("/work");
+
+        assert_eq!(config.backend, AcpAgentBackend::Codex);
+        assert_eq!(config.backend.label(), "codex");
+        assert_eq!(config.binary, PathBuf::from("codex-acp"));
+        assert!(config.args.is_empty());
+        assert_eq!(config.cwd, PathBuf::from("/work"));
+    }
+
+    #[test]
+    fn deepseek_agent_config_launches_deepseek_adapter_serve() {
+        let _guard = env_lock();
+        unsafe {
+            env::set_var("TZU_AGENT_BACKEND", "deepseek");
+            env::set_var("TZU_DEEPSEEK_ACP_BIN", "/bin/deepseek-acp-adapter");
+            env::remove_var("TZU_CODEX_ACP_BIN");
+        }
+
+        let config = AcpAgentConfig::from_env("/work");
+
+        assert_eq!(config.backend, AcpAgentBackend::DeepSeek);
+        assert_eq!(config.backend.label(), "deepseek");
+        assert_eq!(config.binary, PathBuf::from("/bin/deepseek-acp-adapter"));
+        assert_eq!(config.args, vec!["serve".to_string()]);
+        assert_eq!(config.cwd, PathBuf::from("/work"));
+
+        unsafe {
+            env::remove_var("TZU_AGENT_BACKEND");
+            env::remove_var("TZU_DEEPSEEK_ACP_BIN");
+        }
     }
 
     #[derive(Default)]

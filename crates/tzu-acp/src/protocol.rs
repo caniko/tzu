@@ -1,4 +1,4 @@
-//! Narrow ACP/JSON-RPC wire assumptions for `codex-acp`.
+//! Narrow ACP/JSON-RPC wire assumptions for stdio ACP adapters.
 //!
 //! ACP is JSON-RPC over stdio. The methods modeled here are the minimum
 //! vertical slice needed by `tzu`: `initialize`, `session/new`, `session/prompt`,

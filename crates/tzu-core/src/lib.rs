@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use async_trait::async_trait;
 use petgraph::Direction;
@@ -214,6 +215,60 @@ impl ValidationResult {
             message: message.into(),
         });
         self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PromptInspectionStatus {
+    Acceptable,
+    NeedsImprovement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PromptImprovementSuggestion {
+    pub model: String,
+    pub reasoning_effort: String,
+    pub rationale: String,
+    pub improved_prompt_guidance: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PromptInspection {
+    pub status: PromptInspectionStatus,
+    pub findings: Vec<ValidationFinding>,
+    pub suggestion: Option<PromptImprovementSuggestion>,
+}
+
+impl PromptInspection {
+    #[must_use]
+    pub fn acceptable() -> Self {
+        Self {
+            status: PromptInspectionStatus::Acceptable,
+            findings: Vec::new(),
+            suggestion: None,
+        }
+    }
+
+    #[must_use]
+    pub fn needs_improvement(&self) -> bool {
+        self.status == PromptInspectionStatus::NeedsImprovement
+    }
+}
+
+impl fmt::Display for PromptInspection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(suggestion) = &self.suggestion {
+            write!(
+                f,
+                "{} finding(s); improve with {} at reasoning_effort={}",
+                self.findings.len(),
+                suggestion.model,
+                suggestion.reasoning_effort
+            )
+        } else {
+            write!(f, "{} finding(s)", self.findings.len())
+        }
     }
 }
 
@@ -463,6 +518,8 @@ pub enum PlanError {
     Cycle,
     #[error("candidate `{0}` is invalid")]
     InvalidCandidate(String),
+    #[error("goal prompt needs improvement: {0}")]
+    PromptNeedsImprovement(Box<PromptInspection>),
 }
 
 #[async_trait]
@@ -1069,6 +1126,158 @@ impl DomainAdapter for CodingDomainAdapter {
         }
         result
     }
+}
+
+#[must_use]
+pub fn inspect_goal_prompt(goal: &str, domain: DomainKind) -> PromptInspection {
+    let normalized = goal.trim();
+    let lower = normalized.to_ascii_lowercase();
+    let compact = lower
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect::<String>();
+    let words = normalized
+        .split_whitespace()
+        .filter(|word| {
+            word.chars()
+                .any(|ch| ch.is_ascii_alphanumeric() || !ch.is_ascii())
+        })
+        .collect::<Vec<_>>();
+    let mut findings = Vec::new();
+
+    if normalized.is_empty() {
+        findings.push(ValidationFinding {
+            code: "empty-goal".to_string(),
+            message: "Goal prompt is empty; planning requires a concrete requested outcome."
+                .to_string(),
+        });
+    }
+
+    if is_placeholder_goal(&compact) {
+        findings.push(ValidationFinding {
+            code: "placeholder-goal".to_string(),
+            message: "Goal prompt is a placeholder rather than a concrete planning request."
+                .to_string(),
+        });
+    }
+
+    if is_vague_goal(&lower, &words) {
+        findings.push(ValidationFinding {
+            code: "vague-goal".to_string(),
+            message: "Goal prompt is too vague to build a reliable problem spec.".to_string(),
+        });
+    }
+
+    if has_unresolved_template_marker(normalized) {
+        findings.push(ValidationFinding {
+            code: "unresolved-template-marker".to_string(),
+            message: "Goal prompt contains unresolved template markers.".to_string(),
+        });
+    }
+
+    if has_missing_context_marker(&lower) {
+        findings.push(ValidationFinding {
+            code: "missing-context-marker".to_string(),
+            message: "Goal prompt says required context is missing instead of providing it."
+                .to_string(),
+        });
+    }
+
+    if findings.is_empty() {
+        return PromptInspection::acceptable();
+    }
+
+    PromptInspection {
+        status: PromptInspectionStatus::NeedsImprovement,
+        findings,
+        suggestion: Some(prompt_improvement_suggestion(domain)),
+    }
+}
+
+fn prompt_improvement_suggestion(domain: DomainKind) -> PromptImprovementSuggestion {
+    let domain_label = match domain {
+        DomainKind::Generic => "general planning",
+        DomainKind::Coding => "coding planning",
+    };
+    PromptImprovementSuggestion {
+        model: "gpt-5.5".to_string(),
+        reasoning_effort: "medium".to_string(),
+        rationale: format!(
+            "Ambiguous prompt repair is a top-level {domain_label} step; GPT-5.5 at medium effort gives strong planning coherence without the high-effort cost jump."
+        ),
+        improved_prompt_guidance: "Rewrite the goal as one concrete outcome, include required artifacts or context paths, name constraints, and state acceptance criteria or verification commands when known.".to_string(),
+    }
+}
+
+fn is_placeholder_goal(compact_lower: &str) -> bool {
+    matches!(
+        compact_lower,
+        "todo"
+            | "tbd"
+            | "???"
+            | "?"
+            | "<goal>"
+            | "{goal}"
+            | "{{goal}}"
+            | "<prompt>"
+            | "{prompt}"
+            | "{{prompt}}"
+            | "replace-me"
+            | "replaceme"
+    )
+}
+
+fn is_vague_goal(lower: &str, words: &[&str]) -> bool {
+    const VAGUE_SINGLE_WORDS: &[&str] = &[
+        "fix", "update", "improve", "refactor", "change", "clean", "cleanup", "repair", "do",
+        "build", "make",
+    ];
+    const VAGUE_PHRASES: &[&str] = &[
+        "make better",
+        "fix this",
+        "fix it",
+        "update this",
+        "improve this",
+        "refactor this",
+        "do it",
+        "do the thing",
+        "make it work",
+    ];
+
+    if words.len() == 1 {
+        return VAGUE_SINGLE_WORDS.contains(&lower.trim());
+    }
+    words.len() <= 3 && VAGUE_PHRASES.contains(&lower.trim())
+}
+
+fn has_unresolved_template_marker(goal: &str) -> bool {
+    let lower = goal.to_ascii_lowercase();
+    let has_angle_marker = goal.contains('<') && goal.contains('>');
+    let has_brace_marker = goal.contains('{') && goal.contains('}');
+    has_angle_marker
+        || has_brace_marker
+        || lower.contains("{{")
+        || lower.contains("}}")
+        || lower.contains("${")
+        || lower.contains("[insert")
+        || lower.contains("[todo")
+        || lower.contains("[tbd")
+}
+
+fn has_missing_context_marker(lower: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "missing context",
+        "context missing",
+        "need context",
+        "needs context",
+        "no context",
+        "unknown details",
+        "details unknown",
+        "fill in later",
+        "insert details",
+        "replace with",
+    ];
+    MARKERS.iter().any(|marker| lower.contains(marker))
 }
 
 #[must_use]
@@ -1731,6 +1940,57 @@ mod tests {
                 .hard_failures
                 .iter()
                 .any(|finding| finding.code == "tbd-task")
+        );
+    }
+
+    #[test]
+    fn prompt_inspection_accepts_concise_concrete_goal() {
+        let inspection = inspect_goal_prompt("add health endpoint", DomainKind::Coding);
+
+        assert_eq!(inspection.status, PromptInspectionStatus::Acceptable);
+        assert!(inspection.findings.is_empty());
+        assert!(inspection.suggestion.is_none());
+    }
+
+    #[test]
+    fn prompt_inspection_rejects_placeholder_goal_with_routing_suggestion() {
+        let inspection = inspect_goal_prompt("TODO", DomainKind::Generic);
+
+        assert_eq!(inspection.status, PromptInspectionStatus::NeedsImprovement);
+        assert!(
+            inspection
+                .findings
+                .iter()
+                .any(|finding| finding.code == "placeholder-goal")
+        );
+        let suggestion = inspection.suggestion.as_ref().unwrap();
+        assert_eq!(suggestion.model, "gpt-5.5");
+        assert_eq!(suggestion.reasoning_effort, "medium");
+    }
+
+    #[test]
+    fn prompt_inspection_rejects_vague_and_template_goals() {
+        let vague = inspect_goal_prompt("make better", DomainKind::Generic);
+        assert!(
+            vague
+                .findings
+                .iter()
+                .any(|finding| finding.code == "vague-goal")
+        );
+
+        let templated =
+            inspect_goal_prompt("update <goal> with missing context", DomainKind::Coding);
+        assert!(
+            templated
+                .findings
+                .iter()
+                .any(|finding| finding.code == "unresolved-template-marker")
+        );
+        assert!(
+            templated
+                .findings
+                .iter()
+                .any(|finding| finding.code == "missing-context-marker")
         );
     }
 
