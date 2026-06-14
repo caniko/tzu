@@ -8,6 +8,11 @@
     flake-utils.url = "github:numtide/flake-utils";
     treefmt-nix.url = "github:numtide/treefmt-nix";
     git-hooks.url = "github:cachix/git-hooks.nix";
+    plinth = {
+      url = "git+https://codeberg.org/caniko/plinth.git?ref=refs/heads/trunk";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
   outputs = {
@@ -18,6 +23,7 @@
     flake-utils,
     treefmt-nix,
     git-hooks,
+    plinth,
     ...
   }: let
     perSystem = flake-utils.lib.eachDefaultSystem (system: let
@@ -64,6 +70,11 @@
       };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
       package = craneLib.buildPackage (commonArgs // {inherit cargoArtifacts;});
+      website = plinth.lib.${system}.mkProjectSite {
+        pname = "tzu-website";
+        domain = "tzu.tartanoglu.com";
+        configPath = ./website/plinth-project.toml;
+      };
       treefmtEval = treefmt-nix.lib.evalModule pkgs (import ./nix/treefmt.nix);
       pre-commit-check = git-hooks.lib.${system}.run {
         src = ./.;
@@ -74,7 +85,14 @@
         };
       };
     in {
-      packages.default = package;
+      packages = {
+        default = package;
+        website = website;
+        site = website;
+      };
+      apps.deploy-pages = plinth.lib.${system}.mkDeployPagesApp {
+        domain = "tzu.tartanoglu.com";
+      };
       formatter = treefmtEval.config.build.wrapper;
       checks = {
         default = package;
