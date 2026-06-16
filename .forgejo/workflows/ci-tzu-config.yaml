@@ -28,13 +28,13 @@ jobs:
         run: nix flake check
 
       - name: Test
-        run: nix develop -c cargo test -p tzu-cli
+        run: nix develop -c cargo test -p tzu-config
 
       - name: Check MSRV
-        run: nix develop -c cargo check -p tzu-cli --all-targets
+        run: nix develop -c cargo check -p tzu-config --all-targets
 
       - name: Clippy
-        run: nix develop -c cargo clippy -p tzu-cli --all-targets -- --deny warnings
+        run: nix develop -c cargo clippy -p tzu-config --all-targets -- --deny warnings
 
       - name: Package crate
-        run: nix develop -c cargo package -p tzu-cli --allow-dirty --list
+        run: nix develop -c cargo package -p tzu-config --allow-dirty
