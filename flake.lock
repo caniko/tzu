@@ -181,11 +181,11 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1780921919,
-        "narHash": "sha256-qWNGqKWmGecXS7PaDHS3TS++XX3IdWnf4HRscDYfD0E=",
+        "lastModified": 1781640761,
+        "narHash": "sha256-71iIf79t3fS124bhFBXR4U2ofkIbj8VNo3Ol7fwnd8c=",
         "ref": "refs/heads/trunk",
-        "rev": "8c4855f9ee40543277b15d1dbf0298f0a90c34d7",
-        "revCount": 43,
+        "rev": "429e1a237c5048eeac06be4a69fe85a25f348479",
+        "revCount": 67,
         "type": "git",
         "url": "https://codeberg.org/caniko/plinth.git"
       },
