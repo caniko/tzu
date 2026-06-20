@@ -1,5 +1,9 @@
 # tzu
 
+<!-- simit:badges:start -->
+![CI](https://img.shields.io/badge/CI-drift-2088ff) [![crates.io](https://img.shields.io/badge/crates.io-ready-f46623)](https://crates.io/crates/tzu-acp)
+<!-- simit:badges:end -->
+
 `tzu` is a local-first general planning harness. It owns project state, problem
 specs, candidate plan sketches, task decomposition, task DAGs, validation,
 persistence, policy, and run reports. Coding is the first specialized domain
@@ -33,11 +37,85 @@ The CLI binary is `tzu`.
 
 - unset or `codex`: launch `codex-acp`
 - `deepseek` or `deepseek-v4`: launch `deepseek-acp-adapter serve`
+- `opencode`: launch `opencode acp`
+- `hermes`: launch `hermes acp`
 
 `deepseek-acp-adapter` is the right third-party crate for DeepSeek Platform
 support in this project because it preserves `tzu`'s existing ACP boundary while
 speaking DeepSeek's OpenAI-compatible `/chat/completions` API, including the V4
 model defaults and tool loop.
+
+## OpenCode
+
+Install and configure OpenCode outside `tzu`. `tzu` uses the ACP interface
+exposed by `opencode acp`:
+
+```sh
+export TZU_AGENT_BACKEND=opencode
+opencode acp --help
+```
+
+Override the adapter binary with:
+
+```sh
+export TZU_OPENCODE_ACP_BIN=/path/to/opencode
+```
+
+OpenCode handles model selection, tool execution, file operations, LSP
+integration, and MCP servers — all behind the ACP boundary.
+
+## Hermes Agent
+
+Install and configure Hermes Agent outside `tzu`. `tzu` uses the ACP interface
+exposed by `hermes acp`:
+
+```sh
+export TZU_AGENT_BACKEND=hermes
+hermes acp --help
+```
+
+Override the adapter binary with:
+
+```sh
+export TZU_HERMES_ACP_BIN=/path/to/hermes
+```
+
+Hermes provides self-improving skills, provider routing across 300+ models,
+and a learning loop — all behind the ACP boundary.
+
+## MCP Integration
+
+`tzu` exposes its planning capabilities as MCP tools, allowing agents to call
+`tzu` directly for structured planning:
+
+```sh
+tzu mcp
+```
+
+This starts an MCP server over stdio. Configure it in your agent:
+
+```json
+{
+  "mcpServers": {
+    "tzu": {
+      "command": "tzu",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Available tools:
+
+| Tool | Description |
+|---|---|
+| `tzu_init` | Initialize project state |
+| `tzu_inspect_prompt` | Validate a goal prompt before planning |
+| `tzu_plan` | Create a structured plan from a goal |
+| `tzu_status` | Show current plan, tasks, and run reports |
+| `tzu_inspect` | Show frontier selection details |
+| `tzu_run` | Execute a task by ID |
+| `tzu_context` | Get repository context summary |
 
 ## Codex CLI and `codex-acp`
 
@@ -123,14 +201,28 @@ export TZU_PROJECTS_DIRS="/path/to/projects:/path/to/game-dev"
 export TZU_INCLUDE_NESTED_CONTEXTS=true
 ```
 
-Inside this repository's Nix development shell, `XDG_CONFIG_HOME` is set to
-`.tzu/xdg` and `TZU_REQUIRE_CONFIG=true`. That makes the development config
-required at `.tzu/xdg/tzu/config.toml` while keeping normal user installs on the
-optional global XDG config behavior. Create the ignored development config with:
+The Nix development shell and the `.envrc` set `TZU_DATABASE_URL` —
+scoped to tzu only (no `XDG_CONFIG_HOME` set), so your editor and
+developer tool configs are never disturbed.
+
+One-time dev setup:
 
 ```sh
 tzu-dev-config init
 tzu-dev-config validate
+```
+
+Run tzu with scoped `XDG_CONFIG_HOME` (config file at `.tzu/xdg/tzu/config.toml`):
+
+```sh
+tzu-dev-config exec tzu --project-root . status
+tzu-dev-config exec tzu --project-root . plan "add health endpoint" --domain coding
+```
+
+Or via cargo:
+
+```sh
+tzu-dev-config exec cargo run -p tzu-cli --bin tzu -- status
 ```
 
 `.tzu/` is intentionally gitignored; it holds the repo-local development config
@@ -168,29 +260,32 @@ tzu plan "add health endpoint" --domain coding
 tzu status
 tzu inspect
 tzu run inspect-repo
+tzu mcp
 ```
 
-Launch the local GUI:
-
-```sh
-tzu-gui --project-root . --port 7070
-```
-
-Launch the GUI with development reload enabled:
+Launch the GUI with development reload enabled (builds WASM frontend + starts server + watches for changes):
 
 ```sh
 cargo dev-server
+```
+
+Then open `http://127.0.0.1:7070` in a browser.
+
+For a plain server start (no auto-reload, no WASM rebuild — uses previously built frontend assets):
+
+```sh
+tzu-dev-config exec cargo run -p tzu-gui -- --project-root . --port 7070
 ```
 
 Before the first dev run, create the required repo-local config with
 `tzu-dev-config init`. The `cargo dev-server` shortcut uses SQLite at
 `.tzu/state.sqlite` and enables the GUI's `dev-hot-reload` feature. The GUI
 reloads config-derived settings on config-facing API requests, so edits to
-`.tzu/xdg/tzu/config.toml` are visible after the next browser refresh. Plain
-`cargo run --bin tzu-gui` remains the normal non-reloading server path.
+`.tzu/xdg/tzu/config.toml` are visible after the next browser refresh.
 
 The GUI serves a Leptos/Axum workbench on `http://127.0.0.1:7070` by default.
-It uses the same project state and database resolution as the CLI.
+It uses the same project state and database resolution as the CLI. The server
+address is printed to stderr at startup.
 
 `tzu plan` defaults to the generic planning harness. The harness builds an
 immutable problem spec, seeds deterministic candidate plan sketches, validates
@@ -214,10 +309,14 @@ TZU_RUN_MODE=real tzu run implement-goal
 ## Security Notes
 
 - Codex authentication is external to `tzu`.
-- `tzu` never stores auth tokens or DeepSeek API keys.
+- `tzu` never stores auth tokens, DeepSeek API keys, or OpenCode/Hermes credentials.
 - `codex-acp` is found on `PATH` or via `TZU_CODEX_ACP_BIN`.
 - `deepseek-acp-adapter` is found on `PATH` or via `TZU_DEEPSEEK_ACP_BIN` when
   `TZU_AGENT_BACKEND=deepseek`.
+- `opencode` is found on `PATH` or via `TZU_OPENCODE_ACP_BIN` when
+  `TZU_AGENT_BACKEND=opencode`.
+- `hermes` is found on `PATH` or via `TZU_HERMES_ACP_BIN` when
+  `TZU_AGENT_BACKEND=hermes`.
 - ACP permission requests are handled explicitly by `tzu-acp`; unknown protocol
   messages are preserved as opaque JSON instead of being guessed outside
   `tzu-acp/src/protocol.rs`.
