@@ -438,6 +438,21 @@ pub struct FrontierMetadata {
     pub selected_candidate_id: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentGenStatus {
+    InProgress,
+    Complete,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCandidateGeneration {
+    pub batch_id: String,
+    pub status: AgentGenStatus,
+    pub started_at_unix_secs: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct HarnessPlanMetadata {
     pub problem_spec: ProblemSpec,
@@ -446,6 +461,8 @@ pub struct HarnessPlanMetadata {
     pub matches: Vec<MatchResult>,
     #[serde(default)]
     pub frontier: FrontierMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_generation: Option<AgentCandidateGeneration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -600,6 +617,7 @@ where
                 candidates,
                 matches: Vec::new(),
                 frontier,
+                agent_generation: None,
             }),
         };
         validate_plan(&plan)?;
@@ -613,6 +631,9 @@ pub trait DomainAdapter {
     fn seed_candidates(&self, spec: &ProblemSpec) -> Vec<PlanCandidate>;
     fn validate_candidate(&self, spec: &ProblemSpec, candidate: &PlanCandidate)
     -> ValidationResult;
+    fn generate_candidate_prompt(&self, _spec: &ProblemSpec) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -658,6 +679,37 @@ impl DomainAdapter for GenericDomainAdapter {
         candidate: &PlanCandidate,
     ) -> ValidationResult {
         validate_candidate_common(spec, candidate)
+    }
+
+    fn generate_candidate_prompt(&self, spec: &ProblemSpec) -> Option<String> {
+        let goal_text = &spec.goal;
+        Some(format!(
+            r#"You are a planning agent. Given the goal below, produce 2 to 4 alternative plan sketches.
+Each plan must be a JSON object with these fields:
+- "summary": one-line description of this plan approach
+- "tasks": array of task objects, each with:
+    - "id": short kebab-case identifier (unique within each plan)
+    - "title": short human-readable title
+    - "description": what the task does
+    - "status": "pending"
+    - "risk": "low", "medium", or "high"
+    - "acceptance_criteria": array of {{"description": "..."}} objects
+    - "depends_on": array of task IDs that must complete first (empty for root tasks)
+- "assumptions": array of strings
+- "risks": array of strings
+- "verification": array of strings (at least one)
+- "rollout": array of strings
+- "blockers": array of obligation objects {{"id", "description", "producer", "regenerate_command", "validation_command"}} (empty unless you discover missing artifacts)
+
+Return them as a JSON array inside a ```json code block. Do NOT include extra commentary outside the code block.
+
+Goal: {goal_text}
+
+Constraints:
+- Do not fabricate or silently substitute missing required data.
+- Represent foundational unknowns as explicit blockers.
+"#,
+        ))
     }
 }
 
@@ -1092,6 +1144,58 @@ impl DomainAdapter for CodingDomainAdapter {
         }]
     }
 
+    fn generate_candidate_prompt(&self, spec: &ProblemSpec) -> Option<String> {
+        let root = spec.project_root.as_deref().unwrap_or("unknown");
+        let context = &self.context;
+        let file_summary = context
+            .roots
+            .iter()
+            .map(|root| format!("  {}: {} files (languages: {})", root.root, root.file_count, root.languages.join(", ")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!(
+            r#"You are a coding planning agent. Given the goal below and the codebase context, produce 2 to 4 alternative implementation plans.
+
+Each plan must be a JSON object with these fields:
+- "summary": one-line description of this implementation approach
+- "tasks": array of task objects, each with:
+    - "id": short kebab-case identifier (unique within each plan)
+    - "title": short human-readable title
+    - "description": what the task does (be specific about files to create/modify)
+    - "status": "pending"
+    - "risk": "low", "medium", or "high"
+    - "acceptance_criteria": array of {{"description": "..."}} objects (at least one per task)
+    - "depends_on": array of task IDs that must complete first (empty for root tasks)
+- "assumptions": array of strings
+- "risks": array of strings
+- "verification": array of strings (at least one per plan)
+- "rollout": array of strings
+- "blockers": array of obligation objects {{"id", "description", "producer", "regenerate_command", "validation_command"}} (empty unless missing inputs block execution)
+
+Return them as a JSON array inside a ```json code block. Do NOT include extra commentary outside the code block.
+
+Goal: {goal}
+
+Project root: {root}
+
+Project context:
+- Snapshot summary: {ctx_summary}
+- Roots:
+{file_summary}
+
+Constraints:
+- Use codex-acp for semantic coding agent work.
+- Do not overwrite unrelated user work.
+- Represent missing or stale context files as explicit blockers instead of inventing content.
+- Full file contents are loaded lazily; name the files each task will touch.
+"#,
+            goal = spec.goal,
+            root = root,
+            ctx_summary = context.summary,
+            file_summary = file_summary,
+        ))
+    }
+
     fn validate_candidate(
         &self,
         spec: &ProblemSpec,
@@ -1376,7 +1480,7 @@ pub fn validate_candidate_common(
     result
 }
 
-fn score_candidates(candidates: &mut [PlanSketch]) {
+pub fn score_candidates(candidates: &mut [PlanSketch]) {
     for candidate in candidates {
         let risk_profile = derive_risk_profile(&candidate.candidate.tasks);
         let cost_tier = derive_cost_tier(&candidate.candidate.tasks);
@@ -1477,7 +1581,7 @@ fn derive_execution_readiness(validation: &ValidationResult) -> u8 {
     }
 }
 
-fn select_candidate_frontier(
+pub fn select_candidate_frontier(
     candidates: &mut [PlanSketch],
     policy: FrontierPolicy,
 ) -> Result<FrontierMetadata, PlanError> {
@@ -1771,6 +1875,25 @@ fn task_graph(plan: &Plan) -> Result<DiGraph<Task, ()>, PlanError> {
     }
 
     Ok(graph)
+}
+
+/// Parse a JSON array of [`PlanCandidate`] from agent text output.
+///
+/// The agent may return JSON inside markdown code fences (````json````) or as a
+/// standalone JSON array. Returns an empty `Vec` if no valid JSON is found.
+#[must_use]
+pub fn parse_plan_candidate_json(text: &str) -> Vec<PlanCandidate> {
+    let json_block = text
+        .split("```")
+        .skip(1)
+        .find(|block| block.trim().starts_with("json"))
+        .map(|block| block.trim_start_matches("json").trim())
+        .unwrap_or(text);
+    let trimmed = json_block.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return Vec::new();
+    }
+    serde_json::from_str::<Vec<PlanCandidate>>(trimmed).unwrap_or_default()
 }
 
 const fn default_domain_kind() -> DomainKind {
