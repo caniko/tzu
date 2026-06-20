@@ -1,10 +1,12 @@
 [workspace]
 members = [
   "crates/tzu-acp",
+  "crates/tzu-arena",
   "crates/tzu-cli",
   "crates/tzu-config",
   "crates/tzu-core",
   "crates/tzu-gui",
+  "crates/tzu-mcp",
   "crates/tzu-repo",
   "crates/tzu-runner",
 ]
