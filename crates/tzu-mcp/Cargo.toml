@@ -1,6 +1,6 @@
 [package]
-name = "tzu-cli"
-description = "Command-line interface for the tzu local-first coding planner"
+name = "tzu-mcp"
+description = "MCP server exposing tzu planning capabilities as agent tools"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,18 +10,16 @@ readme.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
+schemars.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-tracing-subscriber.workspace = true
-tzu-core = { path = "../tzu-core" }
-tzu-config = { path = "../tzu-config" }
+tracing.workspace = true
 tzu-runner = { path = "../tzu-runner" }
-tzu-mcp = { path = "../tzu-mcp" }
+tzu-core = { path = "../tzu-core" }
+
+rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
 
 [dev-dependencies]
+rmcp = { version = "1", features = ["client"] }
 tempfile.workspace = true
-
-[[bin]]
-name = "tzu"
-path = "src/main.rs"

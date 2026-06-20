@@ -5,7 +5,7 @@ use tzu_core::{
     DomainKind, FrontierDiscardReason, PlanError, PlanSketch, ProjectState, PromptInspection,
     TaskStatus, ordered_tasks,
 };
-use tzu_runner::{PlanningDomain, RunMode, TzuRunner, default_database_url};
+use tzu_runner::{PlanningDomain, RunMode, RunnerError, TzuRunner, default_database_url};
 
 #[derive(Debug, Parser)]
 #[command(name = "tzu")]
@@ -39,6 +39,8 @@ enum Command {
         #[arg(long)]
         frontier: bool,
     },
+    /// Start the tzu MCP server (stdio transport) for agent integration
+    Mcp,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -109,8 +111,15 @@ async fn run(cli: Cli) -> Result<()> {
             print_status(&state)?;
         }
         Command::Run { task_id } => {
-            let report = runner.run_task(&task_id, RunMode::from_env()).await?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            let result = runner.run_task(&task_id, RunMode::from_env()).await;
+            match result {
+                Ok(report) => println!("{}", serde_json::to_string_pretty(&report)?),
+                Err(RunnerError::TaskBlocked { ref task_id, ref unmet }) => {
+                    eprintln!("error: task `{task_id}` is blocked by unfinished dependencies: {unmet}");
+                    std::process::exit(1);
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
         Command::Status => {
             let state = runner.status().await?;
@@ -119,6 +128,15 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Inspect { frontier: _ } => {
             let state = runner.status().await?;
             print_frontier(&state)?;
+        }
+        Command::Mcp => {
+            drop(runner);
+            tzu_mcp::TzuMcpServer::connect(root, &database_url)
+                .await
+                .context("connect MCP server")?
+                .serve_stdio()
+                .await
+                .context("MCP server exited")?;
         }
     }
 
