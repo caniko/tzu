@@ -4,7 +4,7 @@ use leptos_router::{
     StaticSegment,
     components::{Route, Router, Routes},
 };
-use lucide_leptos::{Activity, Circle, CircleCheck, Database, Play, RefreshCw, Settings2};
+use lucide_leptos::{Activity, Circle, CircleCheck, Database, Play, RefreshCw, Settings2, Shield};
 
 #[cfg(feature = "ssr")]
 use leptos::config::LeptosOptions;
@@ -123,6 +123,25 @@ fn Workbench() -> impl IntoView {
                     <StatCard label="Repo files" value_id="repo-files" value="0"/>
                     <StatCard label="Dirty" value_id="repo-dirty" value="unknown"/>
                 </div>
+
+                <section class="arena-section" id="arena-section">
+                    <div class="panel-heading">
+                        <h2>
+                            <Shield size=16/>
+                            <span>"Plan Arena"</span>
+                        </h2>
+                        <div class="arena-controls">
+                            <button id="arena-speed-btn" class="icon-btn" type="button" aria-label="Toggle speed" title="Toggle speed">"1×"</button>
+                            <button id="arena-skip-btn" class="icon-btn" type="button" aria-label="Skip to result" title="Skip to result">"⏭"</button>
+                        </div>
+                    </div>
+                    <div class="arena-canvas-wrapper">
+                        <canvas id="tzu-arena-canvas"></canvas>
+                        <div class="arena-placeholder" id="arena-placeholder">
+                            <span class="muted">"Create a plan to see warriors do battle."</span>
+                        </div>
+                    </div>
+                </section>
 
                 <section class="task-panel">
                     <div class="panel-heading">

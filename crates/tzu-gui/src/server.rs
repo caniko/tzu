@@ -149,6 +149,8 @@ pub fn router(state: GuiState, options: LeptosOptions) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/config", get(config_snapshot))
+        .route("/static/tzu-arena/tzu_arena.js", get(arena_js))
+        .route("/static/tzu-arena/tzu_arena_bg.wasm", get(arena_wasm))
         .route("/api/context-references", get(context_references))
         .route("/api/context-roots/resolve", post(resolve_context_roots))
         .route("/api/projects", get(projects_snapshot))
@@ -287,6 +289,22 @@ async fn app_js() -> impl IntoResponse {
         StatusCode::OK,
         [("content-type", "application/javascript")],
         include_str!("../public/static/app.js"),
+    )
+}
+
+async fn arena_js() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [("content-type", "application/javascript")],
+        include_str!("../public/static/tzu-arena/tzu_arena.js"),
+    )
+}
+
+async fn arena_wasm() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [("content-type", "application/wasm")],
+        include_bytes!("../public/static/tzu-arena/tzu_arena_bg.wasm").as_slice(),
     )
 }
 

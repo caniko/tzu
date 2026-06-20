@@ -792,6 +792,68 @@ function hideMentionSuggestion() {
   $("mention-suggestion")?.classList.add("hidden");
 }
 
+// --- Arena module ---
+let arenaModule = null;
+let arenaSpeed = 1.0;
+
+async function initArena() {
+  const canvas = $("tzu-arena-canvas");
+  if (!canvas) return;
+  try {
+    const mod = await import("/static/tzu-arena/tzu_arena.js");
+    await mod.default();
+    arenaModule = mod;
+    updateArenaVisibility();
+    console.log("tzu-arena WASM module loaded");
+  } catch (e) {
+    console.warn("Arena module unavailable:", e);
+    arenaModule = null;
+  }
+}
+
+function updateArenaVisibility() {
+  const section = $("arena-section");
+  const placeholder = $("arena-placeholder");
+  const plan = currentPlan();
+  if (!section || !placeholder) return;
+  const hasHarness = Boolean(plan?.harness?.candidates?.length);
+  section.classList.toggle("hidden", !hasHarness);
+  placeholder.classList.toggle("hidden", hasHarness);
+}
+
+function sendPlanToArena(plan) {
+  if (!arenaModule || !plan?.harness) return;
+  const json = JSON.stringify(plan.harness);
+  try {
+    arenaModule.set_arena_data(json);
+  } catch (e) {
+    console.warn("Failed to send plan to arena:", e);
+  }
+}
+
+function setArenaSpeed(factor) {
+  arenaSpeed = factor;
+  const btn = $("arena-speed-btn");
+  if (btn) btn.textContent = `${factor}×`;
+  if (arenaModule) {
+    try { arenaModule.set_arena_speed(factor); } catch (_) {}
+  }
+}
+
+function skipArenaToResult() {
+  if (arenaModule) {
+    try { arenaModule.skip_to_result(); } catch (_) {}
+  }
+}
+
+// Extend renderProject to show/hide arena
+const _origRenderProject = renderProject;
+renderProject = function(project) {
+  _origRenderProject(project);
+  updateArenaVisibility();
+  sendPlanToArena(currentPlan());
+};
+
 document.addEventListener("DOMContentLoaded", () => {
   $("refresh-btn")?.addEventListener("click", refreshAll);
   $("init-btn")?.addEventListener("click", initialize);
@@ -854,5 +916,42 @@ document.addEventListener("DOMContentLoaded", () => {
       closeSettingsDialog();
     }
   });
+
+  // Arena event listeners
+  window.addEventListener("tzu-arena:fighter-click", (e) => {
+    const candidateId = e.detail;
+    if (!candidateId) return;
+    const plan = currentPlan();
+    const candidate = plan?.harness?.candidates?.find(c => c.id === candidateId);
+    if (candidate) {
+      setText("selected-task-status", `Candidate: ${candidateId}`);
+      const detail = $("task-detail");
+      if (detail) {
+        detail.textContent = `Summary: ${candidate.candidate?.summary || "N/A"}\nTasks: ${candidate.candidate?.tasks?.length || 0}\nVerifier: ${candidate.score?.verifier_strength || "unknown"}\nRisk: ${candidate.score?.risk_profile || "unknown"}\nCost: ${candidate.score?.cost_tier || "unknown"}`;
+      }
+    }
+  });
+
+  window.addEventListener("tzu-arena:state-change", (e) => {
+    console.log("Arena state:", e.detail);
+  });
+
+  window.addEventListener("tzu-arena:complete", (e) => {
+    console.log("Arena champion:", e.detail);
+    const championId = e.detail;
+    if (championId) {
+      setText("champion-id", championId);
+    }
+  });
+
+  $("arena-speed-btn")?.addEventListener("click", () => {
+    const speeds = [0.5, 1.0, 1.5, 2.0];
+    const idx = speeds.indexOf(arenaSpeed);
+    setArenaSpeed(speeds[(idx + 1) % speeds.length]);
+  });
+
+  $("arena-skip-btn")?.addEventListener("click", skipArenaToResult);
+
+  initArena();
   refreshAll();
 });
