@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use protocol::{
     ACP_PROTOCOL_VERSION, ClientInfo, InitializeParams, InitializeResult, JSONRPC_VERSION,
     JsonRpcError, JsonRpcErrorResponse, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, PromptContent, RequestId, SessionNewParams, SessionNewResult,
-    SessionPromptParams, SessionUpdateParams,
+    JsonRpcResponse, PromptContent, RequestId, SessionCloseParams, SessionNewParams,
+    SessionNewResult, SessionPromptParams, SessionUpdateParams,
 };
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -43,13 +43,17 @@ pub enum AcpError {
 pub enum AcpAgentBackend {
     Codex,
     DeepSeek,
+    OpenCode,
+    Hermes,
 }
 
 impl AcpAgentBackend {
     #[must_use]
     pub fn from_env() -> Self {
-        match env::var("TZU_AGENT_BACKEND") {
-            Ok(value) if matches!(value.as_str(), "deepseek" | "deepseek-v4") => Self::DeepSeek,
+        match env::var("TZU_AGENT_BACKEND").as_deref() {
+            Ok("deepseek" | "deepseek-v4") => Self::DeepSeek,
+            Ok("opencode") => Self::OpenCode,
+            Ok("hermes") => Self::Hermes,
             _ => Self::Codex,
         }
     }
@@ -59,6 +63,8 @@ impl AcpAgentBackend {
         match self {
             Self::Codex => "codex",
             Self::DeepSeek => "deepseek",
+            Self::OpenCode => "opencode",
+            Self::Hermes => "hermes",
         }
     }
 }
@@ -95,6 +101,24 @@ impl AcpAgentConfig {
                 cwd: cwd.into(),
                 timeout: Duration::from_secs(120),
             },
+            AcpAgentBackend::OpenCode => Self {
+                backend,
+                binary: env::var_os("TZU_OPENCODE_ACP_BIN")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("opencode")),
+                args: vec!["acp".to_string()],
+                cwd: cwd.into(),
+                timeout: Duration::from_secs(120),
+            },
+            AcpAgentBackend::Hermes => Self {
+                backend,
+                binary: env::var_os("TZU_HERMES_ACP_BIN")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("hermes")),
+                args: vec!["acp".to_string()],
+                cwd: cwd.into(),
+                timeout: Duration::from_secs(120),
+            },
         }
     }
 }
@@ -125,6 +149,139 @@ impl PermissionHandler for RejectingPermissionHandler {
         _request: JsonRpcRequest,
     ) -> Result<PermissionDecision, AcpError> {
         Ok(PermissionDecision::Reject)
+    }
+}
+
+const ALLOWED_COMMANDS: &[&str] = &[
+    "cargo",
+    "git",
+    "ls",
+    "cat",
+    "find",
+    "grep",
+    "mkdir",
+    "touch",
+    "rm",
+    "cp",
+    "mv",
+    "rustc",
+    "node",
+    "python",
+    "pip",
+    "npm",
+    "npx",
+    "deno",
+    "which",
+    "head",
+    "tail",
+    "sort",
+    "wc",
+    "echo",
+    "printf",
+    "dirname",
+    "basename",
+    "realpath",
+    "readlink",
+    "stat",
+    "du",
+    "df",
+    "file",
+    "diff",
+    "comm",
+    "cmp",
+    "tee",
+    "xargs",
+    "env",
+    "printenv",
+    "pwd",
+    "date",
+    "sleep",
+    "uname",
+    "id",
+    "whoami",
+    "tr",
+    "cut",
+    "paste",
+    "join",
+    "uniq",
+    "expand",
+    "unexpand",
+    "fold",
+    "fmt",
+    "pr",
+    "nl",
+    "od",
+    "xxd",
+    "hexdump",
+    "tarls",
+    "nix",
+    "sqlx",
+    "psql",
+    "createdb",
+];
+
+pub struct ProjectScopedPermissionHandler {
+    project_root: PathBuf,
+}
+
+impl ProjectScopedPermissionHandler {
+    #[must_use]
+    pub fn new(project_root: PathBuf) -> Self {
+        Self { project_root }
+    }
+
+    fn path_within_root(&self, path: &Path) -> bool {
+        path.canonicalize()
+            .is_ok_and(|canonical| canonical.starts_with(&self.project_root))
+    }
+
+    fn command_allowed(command: &str) -> bool {
+        let trimmed = command.trim();
+        ALLOWED_COMMANDS
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+    }
+}
+
+#[async_trait]
+impl PermissionHandler for ProjectScopedPermissionHandler {
+    async fn handle_permission_request(
+        &mut self,
+        request: JsonRpcRequest,
+    ) -> Result<PermissionDecision, AcpError> {
+        let Some(params) = request.params.as_ref() else {
+            return Ok(PermissionDecision::Reject);
+        };
+        let method = params
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        match method {
+            "files/read" | "files/write" | "files/edit" | "files/delete" | "files/create" => {
+                let path = params
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .map(Path::new);
+                match path {
+                    Some(path) if self.path_within_root(path) => {
+                        Ok(PermissionDecision::Accept)
+                    }
+                    _ => Ok(PermissionDecision::Reject),
+                }
+            }
+            "bash/run" => {
+                let command = params
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                if Self::command_allowed(command) {
+                    Ok(PermissionDecision::Accept)
+                } else {
+                    Ok(PermissionDecision::Reject)
+                }
+            }
+            _ => Ok(PermissionDecision::Reject),
+        }
     }
 }
 
@@ -266,13 +423,16 @@ where
                     self.answer_permission_request(request, permissions).await?;
                 }
                 JsonRpcMessage::Response(response) if response.id == request_id => {
-                    return Ok(AcpRunOutput {
-                        session_id: session.session_id,
+                    let output = AcpRunOutput {
+                        session_id: session.session_id.clone(),
                         text,
                         events,
-                    });
+                    };
+                    let _ = self.close_session(&session.session_id).await;
+                    return Ok(output);
                 }
                 JsonRpcMessage::Error(error) if error.id == request_id => {
+                    let _ = self.close_session(&session.session_id).await;
                     return Err(rpc_error(error.error));
                 }
                 other => events.push(AcpEvent {
@@ -280,6 +440,22 @@ where
                     text: Some(format!("{other:?}")),
                 }),
             }
+        }
+    }
+
+    async fn close_session(&mut self, session_id: &str) -> Result<(), AcpError> {
+        let result: Result<serde_json::Value, AcpError> = self
+            .request(
+                "session/close",
+                serde_json::to_value(SessionCloseParams {
+                    session_id: session_id.to_string(),
+                })
+                .unwrap(),
+            )
+            .await;
+        match result {
+            Ok(_) | Err(AcpError::Rpc { .. }) => Ok(()),
+            Err(e) => Err(e),
         }
     }
 
@@ -533,6 +709,51 @@ mod tests {
         unsafe {
             env::remove_var("TZU_AGENT_BACKEND");
             env::remove_var("TZU_DEEPSEEK_ACP_BIN");
+        }
+    }
+
+    #[test]
+    fn opencode_agent_config_launches_opencode_acp() {
+        let _guard = env_lock();
+        unsafe {
+            env::set_var("TZU_AGENT_BACKEND", "opencode");
+            env::remove_var("TZU_OPENCODE_ACP_BIN");
+            env::remove_var("TZU_CODEX_ACP_BIN");
+        }
+
+        let config = AcpAgentConfig::from_env("/work");
+
+        assert_eq!(config.backend, AcpAgentBackend::OpenCode);
+        assert_eq!(config.backend.label(), "opencode");
+        assert_eq!(config.binary, PathBuf::from("opencode"));
+        assert_eq!(config.args, vec!["acp".to_string()]);
+        assert_eq!(config.cwd, PathBuf::from("/work"));
+
+        unsafe {
+            env::remove_var("TZU_AGENT_BACKEND");
+        }
+    }
+
+    #[test]
+    fn hermes_agent_config_launches_hermes_acp() {
+        let _guard = env_lock();
+        unsafe {
+            env::set_var("TZU_AGENT_BACKEND", "hermes");
+            env::set_var("TZU_HERMES_ACP_BIN", "/usr/local/bin/hermes");
+            env::remove_var("TZU_CODEX_ACP_BIN");
+        }
+
+        let config = AcpAgentConfig::from_env("/work");
+
+        assert_eq!(config.backend, AcpAgentBackend::Hermes);
+        assert_eq!(config.backend.label(), "hermes");
+        assert_eq!(config.binary, PathBuf::from("/usr/local/bin/hermes"));
+        assert_eq!(config.args, vec!["acp".to_string()]);
+        assert_eq!(config.cwd, PathBuf::from("/work"));
+
+        unsafe {
+            env::remove_var("TZU_AGENT_BACKEND");
+            env::remove_var("TZU_HERMES_ACP_BIN");
         }
     }
 

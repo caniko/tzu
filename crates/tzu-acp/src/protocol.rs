@@ -2,8 +2,9 @@
 //!
 //! ACP is JSON-RPC over stdio. The methods modeled here are the minimum
 //! vertical slice needed by `tzu`: `initialize`, `session/new`, `session/prompt`,
-//! and `session/update` notifications. Unknown request and notification
-//! payloads stay as `serde_json::Value` so schema drift is contained here.
+//! `session/close`, and `session/update` notifications. Unknown request and
+//! notification payloads stay as `serde_json::Value` so schema drift is
+//! contained here.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,12 @@ pub struct PromptContent {
     #[serde(rename = "type")]
     pub kind: String,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCloseParams {
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
