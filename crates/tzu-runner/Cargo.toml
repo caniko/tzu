@@ -17,6 +17,7 @@ thespis.workspace = true
 thespis_impl.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 tzu-acp = { path = "../tzu-acp" }
 tzu-core = { path = "../tzu-core" }
 tzu-repo = { path = "../tzu-repo" }

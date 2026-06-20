@@ -5,16 +5,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
+use tracing;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{PgPool, Row, SqlitePool};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use tzu_acp::{AcpAgentConfig, AcpAgentProcess, RejectingPermissionHandler};
+use tzu_acp::{AcpAgentConfig, AcpAgentProcess, ProjectScopedPermissionHandler};
 use tzu_core::{
-    CodingContextRootSummary, CodingContextSummary, CodingDomainAdapter, ContextTraversalSummary,
-    DomainKind, GenericDomainAdapter, HarnessPlanMetadata, HarnessPlanner, Planner, PlanningRun,
-    ProjectState, RunReport, TaskStatus, inspect_goal_prompt, ordered_tasks,
-    static_validator_outcome, validate_plan,
+    AgentCandidateGeneration, AgentGenStatus, CodingContextRootSummary, CodingContextSummary,
+    CodingDomainAdapter, ContextTraversalSummary, DomainAdapter, DomainKind, GenericDomainAdapter,
+    HarnessPlanMetadata, HarnessPlanner, Planner, PlanningRun, ProjectState, RunReport,
+    TaskStatus, inspect_goal_prompt, ordered_tasks, parse_plan_candidate_json,
+    score_candidates, select_candidate_frontier, static_validator_outcome,
+    validate_candidate_common, validate_plan, CandidateDescriptor, CandidateScore, FrontierPolicy,
+    SketchStatus,
 };
 use tzu_repo::{InspectOptions, ProjectContextSnapshot, RepoState, inspect_context, inspect_repo};
 
@@ -41,6 +45,11 @@ pub enum RunnerError {
     MissingTask(String),
     #[error("no current plan; run `tzu plan \"<goal>\"` first")]
     MissingPlan,
+    #[error("task `{task_id}` is blocked by unfinished dependencies: {unmet}")]
+    TaskBlocked {
+        task_id: String,
+        unmet: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -355,6 +364,26 @@ impl RunnerActor {
         } else {
             None
         };
+
+        let agent_prompt = match msg.domain {
+            PlanningDomain::Generic => {
+                let adapter = GenericDomainAdapter;
+                let spec = adapter.build_spec(planning_goal);
+                adapter.generate_candidate_prompt(&spec)
+            }
+            PlanningDomain::Coding => {
+                let snapshot = context_snapshot
+                    .as_ref()
+                    .expect("coding context snapshot exists for coding plan");
+                let adapter = CodingDomainAdapter {
+                    project_root: self.root.display().to_string(),
+                    context: coding_context_summary(snapshot),
+                };
+                let spec = adapter.build_spec(planning_goal);
+                adapter.generate_candidate_prompt(&spec)
+            }
+        };
+
         let mut plan = match msg.domain {
             PlanningDomain::Generic => {
                 let planner = HarnessPlanner::new(GenericDomainAdapter);
@@ -395,6 +424,21 @@ impl RunnerActor {
             );
         }
         state.current_plan = Some(plan);
+
+        if agent_prompt.is_some() {
+            if let Some(harness) = state
+                .current_plan
+                .as_mut()
+                .and_then(|plan| plan.harness.as_mut())
+            {
+                let batch_id = format!("agent-{}", now_unix_secs());
+                harness.agent_generation = Some(AgentCandidateGeneration {
+                    batch_id: batch_id.clone(),
+                    status: AgentGenStatus::InProgress,
+                    started_at_unix_secs: now_unix_secs(),
+                });
+            }
+        }
         self.store.save(state.clone()).await?;
         if let (Some(run), Some(harness)) = (
             planning_run,
@@ -409,7 +453,138 @@ impl RunnerActor {
                 self.store.save_context_snapshot(&run_id, snapshot).await?;
             }
         }
+
+        if let Some(prompt) = agent_prompt {
+            let store = self.store.clone();
+            let acp = self.acp.clone();
+            let root = self.root.clone();
+            let batch_id = state
+                .current_plan
+                .as_ref()
+                .and_then(|plan| plan.harness.as_ref())
+                .and_then(|harness| harness.agent_generation.as_ref())
+                .map(|g| g.batch_id.clone())
+                .unwrap_or_default();
+            tokio::spawn(async move {
+                let _ = Self::generate_agent_candidates(store, acp, root, prompt, batch_id)
+                    .await;
+            });
+        }
+
         Ok(state)
+    }
+
+    async fn generate_agent_candidates(
+        store: StoreActorHandle,
+        acp: AcpActorHandle,
+        root: PathBuf,
+        prompt: String,
+        batch_id: String,
+    ) -> Result<(), RunnerError> {
+        let output = match acp.prompt(prompt.clone()).await {
+            Ok(output) => output,
+            Err(error) => {
+                Self::mark_agent_generation_failed(&store, &root, &batch_id, &error).await;
+                return Err(error);
+            }
+        };
+
+        let candidates = parse_plan_candidate_json(&output.text);
+        if candidates.is_empty() {
+            Self::mark_agent_generation_failed(
+                &store,
+                &root,
+                &batch_id,
+                &RunnerError::Acp(tzu_acp::AcpError::Transport(
+                    "agent returned no parseable plan candidates".to_string(),
+                )),
+            )
+            .await;
+            return Ok(());
+        }
+
+        let mut state = store
+            .load(&root)
+            .await?
+            .unwrap_or_else(|| ProjectState::new(root.display().to_string()));
+
+        let Some(plan) = state.current_plan.as_mut() else {
+            return Ok(());
+        };
+        let Some(ref harness) = plan.harness.clone() else {
+            return Ok(());
+        };
+        let spec = &harness.problem_spec;
+        let existing_count = harness.candidates.len();
+
+        let mut agent_sketches: Vec<tzu_core::PlanSketch> = candidates
+            .into_iter()
+            .enumerate()
+            .map(|(idx, candidate)| {
+                let validation = validate_candidate_common(spec, &candidate);
+                let status = if validation.is_valid() {
+                    SketchStatus::Valid
+                } else {
+                    SketchStatus::Invalid
+                };
+                tzu_core::PlanSketch {
+                    id: format!("candidate-{}", existing_count + idx + 1),
+                    problem_id: spec.id.clone(),
+                    parent_ids: Vec::new(),
+                    candidate,
+                    status,
+                    validation,
+                    score: CandidateScore::default(),
+                    descriptor: CandidateDescriptor::default(),
+                    created_by: "agent".to_string(),
+                }
+            })
+            .collect();
+
+        if let Some(harness) = plan.harness.as_mut() {
+            score_candidates(&mut agent_sketches);
+            harness.candidates.append(&mut agent_sketches);
+            match select_candidate_frontier(&mut harness.candidates, FrontierPolicy::default()) {
+                Ok(frontier) => {
+                    harness.frontier = frontier;
+                    harness.selected_candidate_id = harness.frontier.selected_candidate_id.clone();
+                }
+                Err(_) => {}
+            }
+            if let Some(selected) = harness
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id == harness.selected_candidate_id)
+            {
+                plan.tasks = selected.candidate.tasks.clone();
+            }
+            harness.agent_generation = Some(AgentCandidateGeneration {
+                batch_id,
+                status: AgentGenStatus::Complete,
+                started_at_unix_secs: now_unix_secs(),
+            });
+        }
+
+        store.save(state).await
+    }
+
+    async fn mark_agent_generation_failed(
+        store: &StoreActorHandle,
+        root: &Path,
+        batch_id: &str,
+        error: &RunnerError,
+    ) {
+        if let Ok(Some(mut state)) = store.load(root).await {
+            if let Some(plan) = state.current_plan.as_mut() {
+                if let Some(harness) = plan.harness.as_mut() {
+                    if let Some(g) = harness.agent_generation.as_mut() {
+                        g.status = AgentGenStatus::Failed;
+                    }
+                }
+            }
+            let _ = store.save(state).await;
+        }
+        tracing::error!(?error, %batch_id, "agent candidate generation failed");
     }
 
     async fn context_snapshot(
@@ -441,6 +616,24 @@ impl RunnerActor {
             .into_iter()
             .find(|task| task.id == msg.task_id)
             .ok_or_else(|| RunnerError::MissingTask(msg.task_id.clone()))?;
+
+        let unmet: Vec<String> = task
+            .depends_on
+            .iter()
+            .filter(|dep_id| {
+                plan.tasks
+                    .iter()
+                    .find(|t| t.id == **dep_id)
+                    .is_none_or(|t| t.status != TaskStatus::Completed)
+            })
+            .cloned()
+            .collect();
+        if !unmet.is_empty() {
+            return Err(RunnerError::TaskBlocked {
+                task_id: task.id.clone(),
+                unmet: unmet.join(", "),
+            });
+        }
 
         let repo = self.repo.inspect().await?;
         let report = match msg.mode {
@@ -717,7 +910,7 @@ impl AcpActor {
     async fn prompt(&self, prompt: &str) -> Result<tzu_acp::AcpRunOutput, RunnerError> {
         let mut process = AcpAgentProcess::spawn(&AcpAgentConfig::from_env(&self.root)).await?;
         let _ = process.initialize().await?;
-        let mut permissions = RejectingPermissionHandler;
+        let mut permissions = ProjectScopedPermissionHandler::new(self.root.clone());
         process
             .prompt(&self.root, prompt, &mut permissions)
             .await
