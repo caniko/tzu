@@ -8,6 +8,7 @@ Usage: tzu-dev-config <command>
 Commands:
   init [--force]  Create .tzu/xdg/tzu/config.toml with development defaults.
   path            Print the active development config path.
+  exec <cmd...>   Run a command with scoped XDG_CONFIG_HOME and TZU_* env vars.
   validate        Validate that tzu can load the active development config.
 USAGE
 }
@@ -90,6 +91,21 @@ EOF
   printf 'wrote %s\n' "$path"
 }
 
+exec_cmd() {
+  if [ "$#" -eq 0 ]; then
+    printf 'usage: tzu-dev-config exec <command> [args...]\n' >&2
+    return 2
+  fi
+  local root
+  root="$(repo_root)"
+  export XDG_CONFIG_HOME="${root}/.tzu/xdg"
+  export TZU_REQUIRE_CONFIG=true
+  if [ -z "${TZU_DATABASE_URL:-}" ]; then
+    export TZU_DATABASE_URL="sqlite://${root}/.tzu/state.sqlite"
+  fi
+  exec "$@"
+}
+
 validate_config() {
   local root path
   root="$(repo_root)"
@@ -130,6 +146,9 @@ main() {
       ;;
     path)
       config_path
+      ;;
+    exec)
+      exec_cmd "$@"
       ;;
     validate)
       validate_config

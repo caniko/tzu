@@ -125,8 +125,6 @@
           ++ pre-commit-check.enabledPackages;
         LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
         shellHook = ''
-          export XDG_CONFIG_HOME="$PWD/.tzu/xdg"
-          export TZU_REQUIRE_CONFIG=true
           ${pre-commit-check.shellHook}
         '';
       };
