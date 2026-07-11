@@ -1,7 +1,7 @@
 # tzu
 
 <!-- simit:badges:start -->
-![CI](https://img.shields.io/badge/CI-drift-2088ff) [![crates.io](https://img.shields.io/badge/crates.io-ready-f46623)](https://crates.io/crates/tzu-acp)
+![CI](https://img.shields.io/badge/CI-managed-2088ff) [![crates.io](https://img.shields.io/badge/crates.io-ready-f46623)](https://crates.io/crates/tzu-acp)
 <!-- simit:badges:end -->
 
 `tzu` is a local-first general planning harness. It owns project state, problem

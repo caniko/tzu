@@ -59,10 +59,10 @@ jobs:
         run: echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
       - name: Test
-        run: nix develop -c cargo test -p tzu-runner
+        run: nix develop -c cargo test -p tzu-mcp
 
       - name: Package crate
-        run: nix develop -c cargo package -p tzu-runner
+        run: nix develop -c cargo package -p tzu-mcp
   codeberg-small:
     needs: [atlas-nix-trusted]
     runs-on: codeberg-small
@@ -81,4 +81,4 @@ jobs:
         run: nix develop -c cargo check
 
       - name: Clippy
-        run: nix develop -c cargo clippy -p tzu-runner --all-targets -- --deny warnings
+        run: nix develop -c cargo clippy -p tzu-mcp --all-targets -- --deny warnings
