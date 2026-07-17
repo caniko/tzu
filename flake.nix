@@ -2,6 +2,7 @@
   description = "Local-first coding project planner backed by ACP agents";
 
   inputs = {
+    rs-harbor.url = "git+https://codeberg.org/caniko/rs-harbor.git?ref=trunk&rev=9bfa8bdb0ecb22d7bc11448665f7fbaebae7a759";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     crane.url = "github:ipetkov/crane";
@@ -23,6 +24,7 @@
 
   outputs = {
     self,
+    rs-harbor,
     nixpkgs,
     rust-overlay,
     crane,
@@ -43,6 +45,13 @@
         targets = ["wasm32-unknown-unknown"];
       };
       craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+      buildCache = rs-harbor.lib.mkBuildCachePolicy {
+        inherit pkgs;
+        sccachePackage = rs-harbor.packages.${system}.sccache;
+        cacheRoot = null;
+        namespaceScope = "canix-rust";
+        namespaceGeneration = 5;
+      };
       guiAssetSource = path: let
         rel = pkgs.lib.removePrefix "${toString ./.}/" (toString path);
       in
@@ -75,7 +84,9 @@
         '';
       };
       cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-      package = craneLib.buildPackage (commonArgs // {inherit cargoArtifacts;});
+      package = buildCache.withRustCache {
+        package = craneLib.buildPackage (commonArgs // {inherit cargoArtifacts;});
+      };
       website = plinth.lib.${system}.mkProjectSite {
         pname = "tzu-website";
         domain = "tzu.tartanoglu.com";
