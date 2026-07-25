@@ -62,7 +62,7 @@ jobs:
         run: nix develop -c cargo test -p tzu-repo
 
       - name: Package crate
-        run: nix develop -c cargo package -p tzu-repo
+        run: nix develop -c cargo package -p tzu-repo --allow-dirty --list
   codeberg-small:
     needs: [atlas-nix-trusted]
     runs-on: codeberg-small
