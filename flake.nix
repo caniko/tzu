@@ -131,6 +131,7 @@
             cargo-leptos
             cargo-nextest
             nodejs
+            python3
             playwright-driver
             pre-commit
             rust-analyzer
