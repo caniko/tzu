@@ -3,3 +3,5 @@
 /.sqlx/
 result
 result-*
+__pycache__/
+scripts/__pycache__/
