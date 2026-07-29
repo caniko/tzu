@@ -1,12 +1,16 @@
 [site]
 title = "tzu"
-description = "`tzu` is a local-first general planning harness. It owns project state, problem"
+description = "tzu is a local-first general planning harness that owns project state, problem specs, plan sketches, task decomposition, validation, persistence, policy, and run reports."
 base_url = "/"
 footer_note = "Generated from repository metadata by the plinth-project FOSS sweep."
 
 [[nav]]
 label = "Overview"
 href = "#overview"
+
+[[nav]]
+label = "Workflow"
+href = "#workflow"
 
 [[nav]]
 label = "Source"
@@ -19,13 +23,13 @@ href = "https://codeberg.org/caniko/tzu.git"
 [[pages]]
 slug = "index"
 title = "tzu"
-description = "`tzu` is a local-first general planning harness. It owns project state, problem"
+description = "tzu is a local-first general planning harness that owns project state, problem specs, plan sketches, task decomposition, validation, persistence, policy, and run reports."
 
 [[pages.sections]]
 type = "hero"
 title = "tzu"
-tagline = "`tzu` is a local-first general planning harness. It owns project state, problem"
-subtitle = "`tzu` is a local-first general planning harness. It owns project state, problem"
+tagline = "A local-first planning harness for project work"
+subtitle = "Own project state, plan decomposition, validation, persistence, policy, and run reports."
 
 [[pages.sections.ctas]]
 label = "View source"
@@ -37,9 +41,47 @@ type = "feature_grid"
 id = "overview"
 
 [[pages.sections.features]]
-title = "Rust"
-description = "Project technology detected from repository manifests."
+title = "Immutable problem specs"
+description = "Every goal becomes a persisted problem specification before candidate plans are selected."
 
 [[pages.sections.features]]
-title = "Nix"
-description = "Project technology detected from repository manifests."
+title = "Candidate frontier"
+description = "Deterministic plan sketches are validated, scored, capped, and retained as an inspectable frontier."
+
+[[pages.sections.features]]
+title = "Task DAGs"
+description = "Selected plans become ordered task graphs that keep dependencies and execution state explicit."
+
+[[pages.sections.features]]
+title = "Validation and policy"
+description = "Planning, persistence, and agent execution stay behind local validation and explicit policy boundaries."
+
+[[pages.sections.features]]
+title = "ACP agent boundary"
+description = "Codex, DeepSeek, OpenCode, and Hermes adapters speak ACP over stdio JSON-RPC instead of CLI transcript parsing."
+
+[[pages.sections.features]]
+title = "Structured run reports"
+description = "Inspect status, frontier decisions, and task runs through durable project state and machine-readable reports."
+
+[[pages.sections]]
+type = "workflow_steps"
+id = "workflow"
+heading = "Plan a goal, then execute it"
+intro = "Use the CLI or MCP server to keep planning decisions inspectable from the first problem specification through the final run report."
+
+[[pages.sections.steps]]
+title = "Initialize project state"
+description = "tzu init creates the local state needed for planning and execution."
+
+[[pages.sections.steps]]
+title = "Create a plan"
+description = "tzu plan \"organize a research workshop\" builds and persists a selected plan plus its harness metadata."
+
+[[pages.sections.steps]]
+title = "Inspect the frontier"
+description = "tzu inspect shows retained candidates, discard reasons, score buckets, and descriptor cells."
+
+[[pages.sections.steps]]
+title = "Run and review"
+description = "tzu run inspect-repo executes a task, while tzu status reports the selected plan, tasks, and run results."
