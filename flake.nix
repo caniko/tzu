@@ -40,11 +40,12 @@
         overlays = [(import rust-overlay)];
       };
 
-      rustToolchain = rs-harbor.lib.mkToolchain {
+      toolchain = rs-harbor.lib.mkToolchain {
+        inherit pkgs;
         toolchainProfile = "nightly";
-        targets = ["wasm32-unknown-unknown"];
+        crossTargets = ["wasm32-unknown-unknown"];
       };
-      craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+      craneLib = toolchain.craneLib;
       buildCache = rs-harbor.lib.mkBuildCachePolicy {
         inherit pkgs;
         sccachePackage = rs-harbor.packages.${system}.sccache;
@@ -98,7 +99,7 @@
         hooks = import ./nix/pre-commit.nix {
           inherit pkgs;
           treefmtWrapper = treefmtEval.config.build.wrapper;
-          inherit rustToolchain;
+          rustToolchain = toolchain.rustToolchain;
         };
       };
     in {
