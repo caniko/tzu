@@ -125,6 +125,13 @@
           module = import ./nix/home-manager.nix self;
         };
       };
+      devShells.msrv = pkgs.mkShell {
+        inputsFrom = [(self.devShells.${system}.default.overrideAttrs (_: {shellHook = "";}))];
+        packages = [pkgs.rust-bin.stable."1.96.0".minimal];
+        RUSTFLAGS = "";
+        CARGO_ENCODED_RUSTFLAGS = "";
+        RUSTC_WRAPPER = "";
+      };
       devShells.default = craneLib.devShell {
         checks = self.checks.${system};
         packages = with pkgs;
