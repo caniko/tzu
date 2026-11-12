@@ -1,8 +1,7 @@
 [site]
 title = "tzu"
-description = "tzu is a local-first general planning harness that owns project state, problem specs, plan sketches, task decomposition, validation, persistence, policy, and run reports."
+description = "A local-first planning harness that turns a goal into an inspectable, validated plan."
 base_url = "/"
-footer_note = "Generated from repository metadata by the plinth-project FOSS sweep."
 
 [[nav]]
 label = "Overview"
@@ -13,56 +12,56 @@ label = "Workflow"
 href = "#workflow"
 
 [[nav]]
+label = "Get started"
+href = "#install"
+
+[[nav]]
 label = "Source"
-href = "https://codeberg.org/caniko/tzu.git"
+href = "https://codeberg.org/caniko/tzu"
 
 [[footer_links]]
 label = "Source"
-href = "https://codeberg.org/caniko/tzu.git"
+href = "https://codeberg.org/caniko/tzu"
 
 [[pages]]
 slug = "index"
 title = "tzu"
-description = "tzu is a local-first general planning harness that owns project state, problem specs, plan sketches, task decomposition, validation, persistence, policy, and run reports."
+description = "A local-first planning harness that turns a goal into an inspectable, validated plan."
 
 [[pages.sections]]
 type = "hero"
 title = "tzu"
-tagline = "A local-first planning harness for project work"
-subtitle = "Own project state, plan decomposition, validation, persistence, policy, and run reports."
+tagline = "Turn a goal into a plan you can inspect"
+subtitle = "tzu is a local-first planning harness that persists an immutable problem spec for each goal, validates and scores deterministic candidate plans, and runs the selected plan's task graph through an ACP agent session."
 
 [[pages.sections.ctas]]
 label = "View source"
-href = "https://codeberg.org/caniko/tzu.git"
+href = "https://codeberg.org/caniko/tzu"
 primary = true
+
+[[pages.sections.ctas]]
+label = "Get started"
+href = "#install"
 
 [[pages.sections]]
 type = "feature_grid"
 id = "overview"
 
 [[pages.sections.features]]
-title = "Immutable problem specs"
-description = "Every goal becomes a persisted problem specification before candidate plans are selected."
+title = "Spec before plans"
+description = "Every goal becomes a persisted problem specification first, so the input stays fixed and readable while candidate plans are generated and scored."
 
 [[pages.sections.features]]
-title = "Candidate frontier"
-description = "Deterministic plan sketches are validated, scored, capped, and retained as an inspectable frontier."
+title = "Inspectable frontier"
+description = "Deterministic plan sketches are validated, scored and capped, then kept as a frontier you can query for discard reasons and score buckets."
 
 [[pages.sections.features]]
-title = "Task DAGs"
-description = "Selected plans become ordered task graphs that keep dependencies and execution state explicit."
+title = "Task graph to run report"
+description = "The selected plan becomes an ordered task graph with explicit dependencies, and each run writes machine-readable status and results into project state."
 
 [[pages.sections.features]]
-title = "Validation and policy"
-description = "Planning, persistence, and agent execution stay behind local validation and explicit policy boundaries."
-
-[[pages.sections.features]]
-title = "ACP agent boundary"
-description = "Codex, DeepSeek, OpenCode, and Hermes adapters speak ACP over stdio JSON-RPC instead of CLI transcript parsing."
-
-[[pages.sections.features]]
-title = "Structured run reports"
-description = "Inspect status, frontier decisions, and task runs through durable project state and machine-readable reports."
+title = "ACP instead of transcripts"
+description = "Codex, DeepSeek, OpenCode and Hermes adapters speak ACP over stdio JSON-RPC, so tzu never parses CLI output and never stores adapter credentials."
 
 [[pages.sections]]
 type = "workflow_steps"
@@ -85,3 +84,29 @@ description = "tzu inspect shows retained candidates, discard reasons, score buc
 [[pages.sections.steps]]
 title = "Run and review"
 description = "tzu run inspect-repo executes a task, while tzu status reports the selected plan, tasks, and run results."
+
+[[pages.sections]]
+type = "install"
+id = "install"
+heading = "Build it, then plan"
+intro = "The workspace builds with Cargo or inside the Nix dev shell; the CLI binary is named tzu."
+guide_href = "https://codeberg.org/caniko/tzu#installation"
+
+[[pages.sections.primary_routes]]
+label = "Build from source"
+audience = "Cargo, all platforms"
+command = "cargo build --workspace"
+href = "https://codeberg.org/caniko/tzu#installation"
+recommended = true
+
+[[pages.sections.secondary_routes]]
+label = "Nix dev shell"
+audience = "Nix"
+command = "nix develop"
+href = "https://codeberg.org/caniko/tzu#installation"
+
+[[pages.sections.secondary_routes]]
+label = "First plan"
+audience = "CLI"
+command = "tzu plan \"organize a research workshop\""
+href = "https://codeberg.org/caniko/tzu#usage"
