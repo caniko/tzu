@@ -46,6 +46,11 @@
         crossTargets = ["wasm32-unknown-unknown"];
       };
       craneLib = toolchain.craneLib;
+      msrvToolchain = rs-harbor.lib.mkToolchain {
+        inherit pkgs;
+        toolchainFile = ./nix/rust-toolchain-msrv.toml;
+        withRustAnalyzer = false;
+      };
       buildCache = rs-harbor.lib.mkBuildCachePolicy {
         inherit pkgs;
         sccachePackage = rs-harbor.packages.${system}.sccache;
@@ -146,6 +151,12 @@
         shellHook = ''
           ${pre-commit-check.shellHook}
         '';
+      };
+      devShells.msrv = msrvToolchain.craneLib.devShell {
+        packages = nativeBuildInputs ++ buildInputs;
+        LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
+        RUSTFLAGS = "";
+        CARGO_ENCODED_RUSTFLAGS = "";
       };
     });
   in
