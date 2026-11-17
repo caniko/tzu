@@ -7,8 +7,8 @@ use wasm_bindgen::prelude::*;
 mod arena;
 mod bridge;
 mod combat;
-mod data;
 mod damage;
+mod data;
 mod fighters;
 mod theme;
 
@@ -17,9 +17,9 @@ use bridge::{
     click_detection, dispatch_click_to_js, dispatch_complete_to_js, dispatch_state_change_to_js,
 };
 use combat::{
-    battle_tick, capacity_tick, coronation_tick, detect_plan_data, enter_battling,
+    ArenaState, battle_tick, capacity_tick, coronation_tick, detect_plan_data, enter_battling,
     enter_capacity_cut, enter_coronation, enter_entrance, enter_validation, entrance_tick,
-    fade_quotes, validation_tick, ArenaState,
+    fade_quotes, validation_tick,
 };
 use data::ArenaPlanData;
 use fighters::{mark_eliminated, spawn_fighters, sync_health_bars, update_entrance};
@@ -72,13 +72,9 @@ fn check_pending_data(mut commands: Commands, plan_data: Option<Res<ArenaPlanDat
 
 fn check_skip(mut next_state: ResMut<NextState<ArenaState>>, state: Res<State<ArenaState>>) {
     let should_skip = match SKIP_FLAG.lock() {
-        Ok(mut flag) => {
-            if *flag {
-                *flag = false;
-                true
-            } else {
-                false
-            }
+        Ok(mut flag) if *flag => {
+            *flag = false;
+            true
         }
         _ => false,
     };
@@ -117,17 +113,32 @@ pub fn start() {
                 update_particles,
             ),
         )
-        .add_systems(OnEnter(ArenaState::Entrance), (enter_entrance, spawn_fighters))
-        .add_systems(Update, update_entrance.run_if(in_state(ArenaState::Entrance)))
+        .add_systems(
+            OnEnter(ArenaState::Entrance),
+            (enter_entrance, spawn_fighters),
+        )
+        .add_systems(
+            Update,
+            update_entrance.run_if(in_state(ArenaState::Entrance)),
+        )
         .add_systems(Update, entrance_tick.run_if(in_state(ArenaState::Entrance)))
         .add_systems(OnEnter(ArenaState::Validation), enter_validation)
-        .add_systems(Update, validation_tick.run_if(in_state(ArenaState::Validation)))
+        .add_systems(
+            Update,
+            validation_tick.run_if(in_state(ArenaState::Validation)),
+        )
         .add_systems(OnEnter(ArenaState::Battling), enter_battling)
         .add_systems(Update, battle_tick.run_if(in_state(ArenaState::Battling)))
         .add_systems(OnEnter(ArenaState::CapacityCut), enter_capacity_cut)
-        .add_systems(Update, capacity_tick.run_if(in_state(ArenaState::CapacityCut)))
+        .add_systems(
+            Update,
+            capacity_tick.run_if(in_state(ArenaState::CapacityCut)),
+        )
         .add_systems(OnEnter(ArenaState::Coronation), enter_coronation)
-        .add_systems(Update, coronation_tick.run_if(in_state(ArenaState::Coronation)))
+        .add_systems(
+            Update,
+            coronation_tick.run_if(in_state(ArenaState::Coronation)),
+        )
         .add_systems(
             Update,
             (

@@ -114,8 +114,13 @@ async fn run(cli: Cli) -> Result<()> {
             let result = runner.run_task(&task_id, RunMode::from_env()).await;
             match result {
                 Ok(report) => println!("{}", serde_json::to_string_pretty(&report)?),
-                Err(RunnerError::TaskBlocked { ref task_id, ref unmet }) => {
-                    eprintln!("error: task `{task_id}` is blocked by unfinished dependencies: {unmet}");
+                Err(RunnerError::TaskBlocked {
+                    ref task_id,
+                    ref unmet,
+                }) => {
+                    eprintln!(
+                        "error: task `{task_id}` is blocked by unfinished dependencies: {unmet}"
+                    );
                     std::process::exit(1);
                 }
                 Err(e) => return Err(e.into()),

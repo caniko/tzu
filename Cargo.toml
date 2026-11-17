@@ -58,7 +58,6 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 tempfile = "3"
 thespis = { version = "0.2", features = ["derive"] }
-thespis_impl = "0.3"
 thiserror = "2"
 toml = "1"
 tokio = { version = "1", features = [
@@ -72,10 +71,8 @@ tokio = { version = "1", features = [
   "time",
 ] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-uuid = { version = "1", features = ["serde", "v5"] }
 wasm-bindgen = "=0.2.121"
 
 [profile.wasm-release]

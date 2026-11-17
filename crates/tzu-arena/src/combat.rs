@@ -19,11 +19,15 @@ pub enum ArenaState {
 
 #[derive(Event)]
 pub struct ArenaStateChanged {
+    // Read by the wasm32 event bridge in bridge.rs.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub state: String,
 }
 
 #[derive(Event)]
 pub struct ArenaComplete {
+    // Read by the wasm32 event bridge in bridge.rs.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub champion_id: String,
 }
 
@@ -65,14 +69,14 @@ pub fn detect_plan_data(
     }
 }
 
-pub fn enter_entrance(
-    mut commands: Commands,
-    plan_data: Res<ArenaPlanData>,
-) {
+pub fn enter_entrance(mut commands: Commands, plan_data: Res<ArenaPlanData>) {
     let quote = get_random_quote();
     commands.spawn((
         Text2d::new(format!("{} {}", quote.0, quote.1)),
-        TextFont { font_size: FontSize::Px(14.0), ..default() },
+        TextFont {
+            font_size: FontSize::Px(14.0),
+            ..default()
+        },
         TextColor(Color::srgba(0.8, 0.8, 0.8, 0.0)),
         TextLayout::justify(Justify::Center),
         Transform::from_xyz(0.0, 200.0, 20.0),
@@ -117,10 +121,9 @@ pub fn enter_validation(
     });
 
     for (entity, fighter) in &fighter_query {
-        let is_invalid = plan_data
-            .discard_sequence
-            .iter()
-            .any(|d| d.candidate_id == fighter.candidate_id && d.reason == FrontierDiscardReason::Invalid);
+        let is_invalid = plan_data.discard_sequence.iter().any(|d| {
+            d.candidate_id == fighter.candidate_id && d.reason == FrontierDiscardReason::Invalid
+        });
 
         if is_invalid {
             commands.entity(entity).insert(DisqualifyFlash {
@@ -159,10 +162,7 @@ pub fn validation_tick(
     }
 }
 
-pub fn enter_battling(
-    mut commands: Commands,
-    plan_data: Res<ArenaPlanData>,
-) {
+pub fn enter_battling(mut commands: Commands, plan_data: Res<ArenaPlanData>) {
     commands.trigger(ArenaStateChanged {
         state: "battling".to_string(),
     });
@@ -274,7 +274,10 @@ pub fn enter_coronation(
     let quote = get_random_quote();
     commands.spawn((
         Text2d::new(format!("Victory: {}", quote.1)),
-        TextFont { font_size: FontSize::Px(16.0), ..default() },
+        TextFont {
+            font_size: FontSize::Px(16.0),
+            ..default()
+        },
         TextColor(Color::srgb(1.0, 0.84, 0.0)),
         TextLayout::justify(Justify::Center),
         Transform::from_xyz(0.0, 180.0, 20.0),
@@ -328,7 +331,7 @@ pub fn fade_quotes(
         overlay.timer.tick(time.delta());
         let frac = overlay.timer.fraction();
         let alpha = if frac > 0.8 {
-            (1.0 - (frac - 0.8) / 0.2)
+            1.0 - (frac - 0.8) / 0.2
         } else if frac < 0.2 {
             frac / 0.2
         } else {

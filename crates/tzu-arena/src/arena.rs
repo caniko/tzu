@@ -7,9 +7,7 @@ use crate::theme::{GROUND_COLOR, MOUNTAIN_COLORS, PLATFORM_COLOR};
 pub struct ArenaBackground;
 
 #[derive(Component)]
-pub struct Mountain {
-    pub layer: usize,
-}
+pub struct Mountain;
 
 #[derive(Component)]
 pub struct Ground;
@@ -42,7 +40,7 @@ pub fn spawn_background(mut commands: Commands) {
                     ..default()
                 },
                 Transform::from_xyz(seg_x, y - seg_height / 2.0, -10.0 + layer),
-                Mountain { layer: i },
+                Mountain,
             ));
         }
     }
@@ -78,11 +76,7 @@ pub fn spawn_background(mut commands: Commands) {
     ));
 }
 
-pub fn idle_particles(
-    time: Res<Time>,
-    mut commands: Commands,
-    query: Query<&ArenaBackground>,
-) {
+pub fn idle_particles(time: Res<Time>, mut commands: Commands, query: Query<&ArenaBackground>) {
     if (time.elapsed_secs() * 2.0).fract() > 0.95 {
         let x = (time.elapsed_secs() * 0.3).sin() * 300.0;
         if query.single().is_ok() {
