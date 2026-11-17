@@ -3,6 +3,8 @@ use bevy::window::PrimaryWindow;
 
 #[derive(Event)]
 pub struct FighterClick {
+    // Read by the wasm32 event bridge below.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub candidate_id: String,
 }
 
@@ -35,13 +37,15 @@ pub fn click_detection(
 
     for (fighter, transform, sprite) in &fighters {
         let fighter_pos = transform.translation.truncate();
-        let sprite_size = sprite.custom_size.map_or(Vec2::splat(48.0), |s| s);
+        let sprite_size = sprite.custom_size.unwrap_or(Vec2::splat(48.0));
         let half = sprite_size / 2.0;
         let min = fighter_pos - half;
         let max = fighter_pos + half;
 
-        if world_pos.x >= min.x && world_pos.x <= max.x
-            && world_pos.y >= min.y && world_pos.y <= max.y
+        if world_pos.x >= min.x
+            && world_pos.x <= max.x
+            && world_pos.y >= min.y
+            && world_pos.y <= max.y
         {
             commands.trigger(FighterClick {
                 candidate_id: fighter.candidate_id.clone(),
@@ -61,11 +65,9 @@ pub fn dispatch_click_to_js(on: On<FighterClick>) {
         let window = web_sys::window().expect("no window");
         let mut init = CustomEventInit::new();
         init.set_detail(&JsValue::from_str(&candidate_id));
-        let custom_event = web_sys::CustomEvent::new_with_event_init_dict(
-            "tzu-arena:fighter-click",
-            &init,
-        )
-        .expect("cannot create CustomEvent");
+        let custom_event =
+            web_sys::CustomEvent::new_with_event_init_dict("tzu-arena:fighter-click", &init)
+                .expect("cannot create CustomEvent");
         window
             .dispatch_event(&custom_event)
             .expect("cannot dispatch event");
@@ -84,11 +86,9 @@ pub fn dispatch_state_change_to_js(on: On<crate::combat::ArenaStateChanged>) {
         let window = web_sys::window().expect("no window");
         let mut init = CustomEventInit::new();
         init.set_detail(&JsValue::from_str(&state));
-        let custom_event = web_sys::CustomEvent::new_with_event_init_dict(
-            "tzu-arena:state-change",
-            &init,
-        )
-        .expect("cannot create CustomEvent");
+        let custom_event =
+            web_sys::CustomEvent::new_with_event_init_dict("tzu-arena:state-change", &init)
+                .expect("cannot create CustomEvent");
         window
             .dispatch_event(&custom_event)
             .expect("cannot dispatch event");
@@ -107,11 +107,9 @@ pub fn dispatch_complete_to_js(on: On<crate::combat::ArenaComplete>) {
         let window = web_sys::window().expect("no window");
         let mut init = CustomEventInit::new();
         init.set_detail(&JsValue::from_str(&champion_id));
-        let custom_event = web_sys::CustomEvent::new_with_event_init_dict(
-            "tzu-arena:complete",
-            &init,
-        )
-        .expect("cannot create CustomEvent");
+        let custom_event =
+            web_sys::CustomEvent::new_with_event_init_dict("tzu-arena:complete", &init)
+                .expect("cannot create CustomEvent");
         window
             .dispatch_event(&custom_event)
             .expect("cannot dispatch event");

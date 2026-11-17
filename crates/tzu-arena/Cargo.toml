@@ -13,21 +13,27 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bevy = { version = "0.19.0-rc.3", default-features = false, features = [
-    "bevy_asset",
-    "bevy_camera",
-    "bevy_core_pipeline",
-    "bevy_image",
-    "bevy_log",
-    "bevy_render",
-    "bevy_sprite",
-    "bevy_state",
-    "bevy_text",
-    "bevy_winit",
-    "webgl2",
-    "x11",
+  "bevy_asset",
+  "bevy_camera",
+  "bevy_core_pipeline",
+  "bevy_image",
+  "bevy_log",
+  "bevy_render",
+  "bevy_sprite",
+  "bevy_state",
+  "bevy_text",
+  "bevy_winit",
+  "webgl2",
+  "x11",
 ] }
-serde = { workspace = true }
 serde_json = { workspace = true }
 tzu-core = { path = "../tzu-core" }
 wasm-bindgen = { workspace = true }
-web-sys = { version = "0.3", features = ["Window", "CustomEvent", "CustomEventInit", "Document"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = [
+  "Window",
+  "CustomEvent",
+  "CustomEventInit",
+  "Document",
+] }

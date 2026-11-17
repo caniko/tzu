@@ -1150,7 +1150,14 @@ impl DomainAdapter for CodingDomainAdapter {
         let file_summary = context
             .roots
             .iter()
-            .map(|root| format!("  {}: {} files (languages: {})", root.root, root.file_count, root.languages.join(", ")))
+            .map(|root| {
+                format!(
+                    "  {}: {} files (languages: {})",
+                    root.root,
+                    root.file_count,
+                    root.languages.join(", ")
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         Some(format!(

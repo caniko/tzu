@@ -1,14 +1,10 @@
 use std::path::PathBuf;
 
-use rmcp::{
-    tool, tool_router,
-    handler::server::wrapper::Parameters,
-    ServiceExt, transport::stdio,
-};
+use rmcp::{ServiceExt, handler::server::wrapper::Parameters, tool, tool_router, transport::stdio};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tzu_runner::{RunnerActorHandle, TzuRunner};
 use tzu_core::{DomainKind, inspect_goal_prompt};
+use tzu_runner::{RunnerActorHandle, TzuRunner};
 
 #[derive(Clone)]
 pub struct TzuMcpServer {
@@ -41,13 +37,15 @@ pub struct TzuInspectPromptParams {
 }
 
 fn json_ok<T: Serialize>(value: &T) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|e| {
-        format!(r#"{{"error":"serialization failed: {e}"}}"#)
-    })
+    serde_json::to_string_pretty(value)
+        .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
 }
 
 fn json_error(error: &dyn std::fmt::Display) -> String {
-    format!(r#"{{"error":"{}"}}"#, error.to_string().replace('"', r#"\""#))
+    format!(
+        r#"{{"error":"{}"}}"#,
+        error.to_string().replace('"', r#"\""#)
+    )
 }
 
 #[tool_router(server_handler)]
@@ -60,7 +58,9 @@ impl TzuMcpServer {
         }
     }
 
-    #[tool(description = "Validate a goal prompt before planning; returns findings and improvement suggestions")]
+    #[tool(
+        description = "Validate a goal prompt before planning; returns findings and improvement suggestions"
+    )]
     async fn tzu_inspect_prompt(
         &self,
         Parameters(params): Parameters<TzuInspectPromptParams>,
@@ -74,10 +74,7 @@ impl TzuMcpServer {
     }
 
     #[tool(description = "Create a structured plan from a goal")]
-    async fn tzu_plan(
-        &self,
-        Parameters(params): Parameters<TzuPlanParams>,
-    ) -> String {
+    async fn tzu_plan(&self, Parameters(params): Parameters<TzuPlanParams>) -> String {
         let domain = match params.domain.as_deref() {
             Some("coding") => tzu_runner::PlanningDomain::Coding,
             _ => tzu_runner::PlanningDomain::Generic,
@@ -113,7 +110,9 @@ impl TzuMcpServer {
         }
     }
 
-    #[tool(description = "Show frontier selection details: retained candidates, scores, descriptors, and discard reasons")]
+    #[tool(
+        description = "Show frontier selection details: retained candidates, scores, descriptors, and discard reasons"
+    )]
     async fn tzu_inspect(&self) -> String {
         match self.handle.status().await {
             Ok(state) => {
@@ -121,7 +120,10 @@ impl TzuMcpServer {
                     return r#"{"message":"no current plan"}"#.to_string();
                 };
                 let Some(harness) = &plan.harness else {
-                    return format!(r#"{{"plan_id":"{}","message":"no harness metadata"}}"#, plan.id);
+                    return format!(
+                        r#"{{"plan_id":"{}","message":"no harness metadata"}}"#,
+                        plan.id
+                    );
                 };
                 json_ok(&harness.frontier)
             }
@@ -130,18 +132,19 @@ impl TzuMcpServer {
     }
 
     #[tool(description = "Execute a task by ID using the configured ACP backend")]
-    async fn tzu_run(
-        &self,
-        Parameters(params): Parameters<TzuRunParams>,
-    ) -> String {
+    async fn tzu_run(&self, Parameters(params): Parameters<TzuRunParams>) -> String {
         let mode = match params.mode.as_deref() {
             Some("real") => tzu_runner::RunMode::Real,
             _ => tzu_runner::RunMode::Mock,
         };
-        match self.handle.run_task(tzu_runner::RunTask {
-            task_id: params.task_id,
-            mode,
-        }).await {
+        match self
+            .handle
+            .run_task(tzu_runner::RunTask {
+                task_id: params.task_id,
+                mode,
+            })
+            .await
+        {
             Ok(report) => json_ok(&report),
             Err(e) => json_error(&e),
         }
@@ -221,10 +224,7 @@ mod tests {
             server.serve(server_transport).await?.waiting().await?;
             anyhow::Ok(())
         });
-        let client = DummyClientHandler::default()
-            .serve(client_transport)
-            .await
-            .unwrap();
+        let client = DummyClientHandler.serve(client_transport).await.unwrap();
 
         let result = client
             .call_tool(
@@ -243,7 +243,10 @@ mod tests {
             .and_then(|c| c.raw.as_text())
             .map(|t| t.text.as_str())
             .expect("Expected text content");
-        assert!(text.contains("empty-goal"), "expected empty-goal finding in: {text}");
+        assert!(
+            text.contains("empty-goal"),
+            "expected empty-goal finding in: {text}"
+        );
 
         client.cancel().await.unwrap();
         server_handle.await.unwrap().unwrap();
@@ -258,10 +261,7 @@ mod tests {
             server.serve(server_transport).await?.waiting().await?;
             anyhow::Ok(())
         });
-        let client = DummyClientHandler::default()
-            .serve(client_transport)
-            .await
-            .unwrap();
+        let client = DummyClientHandler.serve(client_transport).await.unwrap();
 
         let result = client
             .call_tool(
@@ -280,7 +280,10 @@ mod tests {
             .and_then(|c| c.raw.as_text())
             .map(|t| t.text.as_str())
             .expect("Expected text content");
-        assert!(text.contains("acceptable"), "expected acceptable status in: {text}");
+        assert!(
+            text.contains("acceptable"),
+            "expected acceptable status in: {text}"
+        );
 
         client.cancel().await.unwrap();
         server_handle.await.unwrap().unwrap();
@@ -295,10 +298,7 @@ mod tests {
             server.serve(server_transport).await?.waiting().await?;
             anyhow::Ok(())
         });
-        let client = DummyClientHandler::default()
-            .serve(client_transport)
-            .await
-            .unwrap();
+        let client = DummyClientHandler.serve(client_transport).await.unwrap();
 
         let init_result = client
             .call_tool(CallToolRequestParams::new("tzu_init"))
@@ -310,7 +310,10 @@ mod tests {
             .and_then(|c| c.raw.as_text())
             .map(|t| t.text.as_str())
             .expect("Expected text content");
-        assert!(init_text.contains("project_root"), "expected project_root in: {init_text}");
+        assert!(
+            init_text.contains("project_root"),
+            "expected project_root in: {init_text}"
+        );
 
         let status_result = client
             .call_tool(CallToolRequestParams::new("tzu_status"))
@@ -322,7 +325,10 @@ mod tests {
             .and_then(|c| c.raw.as_text())
             .map(|t| t.text.as_str())
             .expect("Expected text content");
-        assert!(status_text.contains("project_root"), "expected project_root in: {status_text}");
+        assert!(
+            status_text.contains("project_root"),
+            "expected project_root in: {status_text}"
+        );
 
         client.cancel().await.unwrap();
         server_handle.await.unwrap().unwrap();
