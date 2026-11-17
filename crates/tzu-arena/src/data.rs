@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use bevy::ecs::resource::Resource;
-use tzu_core::{CandidateScore, FrontierDiscardReason, HarnessPlanMetadata, SketchStatus};
+use tzu_core::{CandidateScore, FrontierDiscardReason, HarnessPlanMetadata};
 
-use crate::damage::FighterPower;
+use crate::damage::max_hp_from_score;
 
 #[derive(Debug, Clone, Resource)]
 pub struct ArenaPlanData {
@@ -16,16 +16,8 @@ pub struct ArenaPlanData {
 #[derive(Debug, Clone)]
 pub struct ArenaFighterData {
     pub candidate_id: String,
-    pub sketch_id: String,
-    pub summary: String,
-    pub status: SketchStatus,
-    pub score: CandidateScore,
-    pub power: FighterPower,
     pub max_hp: f32,
     pub archetype: tzu_core::VerifierDependency,
-    pub risk: tzu_core::Risk,
-    pub cost: tzu_core::CostTier,
-    pub verifier_strength: tzu_core::VerifierStrength,
 }
 
 #[derive(Debug, Clone)]
@@ -51,16 +43,8 @@ impl ArenaPlanData {
                 let descriptor = &sketch.descriptor;
                 ArenaFighterData {
                     candidate_id: sketch.id.clone(),
-                    sketch_id: sketch.id.clone(),
-                    summary: sketch.candidate.summary.clone(),
-                    status: sketch.status,
-                    score: score.clone(),
-                    power: FighterPower::from_score(score),
-                    max_hp: crate::damage::max_hp_from_score(score),
+                    max_hp: max_hp_from_score(score),
                     archetype: descriptor.verifier_dependency,
-                    risk: descriptor.risk_profile,
-                    cost: descriptor.cost_tier,
-                    verifier_strength: score.verifier_strength,
                 }
             })
             .collect();
@@ -78,8 +62,7 @@ impl ArenaPlanData {
                     let winner_score = score_map.get(winner_id.as_str());
                     match (winner_score, loser_score) {
                         (Some(ws), Some(ls)) => {
-                            let outcome = crate::damage::compute_fight_outcome(ws, ls);
-                            Some(outcome.closeness)
+                            Some(crate::damage::compute_fight_closeness(ws, ls))
                         }
                         _ => None,
                     }
@@ -109,13 +92,5 @@ impl ArenaPlanData {
 
     pub fn is_retained(&self, candidate_id: &str) -> bool {
         self.retained_ids.iter().any(|id| id == candidate_id)
-    }
-
-    pub fn is_discarded(&self, candidate_id: &str) -> bool {
-        self.discard_sequence.iter().any(|d| d.candidate_id == candidate_id)
-    }
-
-    pub fn is_selected(&self, candidate_id: &str) -> bool {
-        self.selected_candidate_id == candidate_id
     }
 }

@@ -5,20 +5,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
-use tracing;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{PgPool, Row, SqlitePool};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use tzu_acp::{AcpAgentConfig, AcpAgentProcess, ProjectScopedPermissionHandler};
 use tzu_core::{
-    AgentCandidateGeneration, AgentGenStatus, CodingContextRootSummary, CodingContextSummary,
-    CodingDomainAdapter, ContextTraversalSummary, DomainAdapter, DomainKind, GenericDomainAdapter,
-    HarnessPlanMetadata, HarnessPlanner, Planner, PlanningRun, ProjectState, RunReport,
-    TaskStatus, inspect_goal_prompt, ordered_tasks, parse_plan_candidate_json,
-    score_candidates, select_candidate_frontier, static_validator_outcome,
-    validate_candidate_common, validate_plan, CandidateDescriptor, CandidateScore, FrontierPolicy,
-    SketchStatus,
+    AgentCandidateGeneration, AgentGenStatus, CandidateDescriptor, CandidateScore,
+    CodingContextRootSummary, CodingContextSummary, CodingDomainAdapter, ContextTraversalSummary,
+    DomainAdapter, DomainKind, FrontierPolicy, GenericDomainAdapter, HarnessPlanMetadata,
+    HarnessPlanner, Planner, PlanningRun, ProjectState, RunReport, SketchStatus, TaskStatus,
+    inspect_goal_prompt, ordered_tasks, parse_plan_candidate_json, score_candidates,
+    select_candidate_frontier, static_validator_outcome, validate_candidate_common, validate_plan,
 };
 use tzu_repo::{InspectOptions, ProjectContextSnapshot, RepoState, inspect_context, inspect_repo};
 
@@ -46,10 +44,7 @@ pub enum RunnerError {
     #[error("no current plan; run `tzu plan \"<goal>\"` first")]
     MissingPlan,
     #[error("task `{task_id}` is blocked by unfinished dependencies: {unmet}")]
-    TaskBlocked {
-        task_id: String,
-        unmet: String,
-    },
+    TaskBlocked { task_id: String, unmet: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,19 +420,18 @@ impl RunnerActor {
         }
         state.current_plan = Some(plan);
 
-        if agent_prompt.is_some() {
-            if let Some(harness) = state
+        if agent_prompt.is_some()
+            && let Some(harness) = state
                 .current_plan
                 .as_mut()
                 .and_then(|plan| plan.harness.as_mut())
-            {
-                let batch_id = format!("agent-{}", now_unix_secs());
-                harness.agent_generation = Some(AgentCandidateGeneration {
-                    batch_id: batch_id.clone(),
-                    status: AgentGenStatus::InProgress,
-                    started_at_unix_secs: now_unix_secs(),
-                });
-            }
+        {
+            let batch_id = format!("agent-{}", now_unix_secs());
+            harness.agent_generation = Some(AgentCandidateGeneration {
+                batch_id: batch_id.clone(),
+                status: AgentGenStatus::InProgress,
+                started_at_unix_secs: now_unix_secs(),
+            });
         }
         self.store.save(state.clone()).await?;
         if let (Some(run), Some(harness)) = (
@@ -466,8 +460,7 @@ impl RunnerActor {
                 .map(|g| g.batch_id.clone())
                 .unwrap_or_default();
             tokio::spawn(async move {
-                let _ = Self::generate_agent_candidates(store, acp, root, prompt, batch_id)
-                    .await;
+                let _ = Self::generate_agent_candidates(store, acp, root, prompt, batch_id).await;
             });
         }
 
@@ -544,12 +537,11 @@ impl RunnerActor {
         if let Some(harness) = plan.harness.as_mut() {
             score_candidates(&mut agent_sketches);
             harness.candidates.append(&mut agent_sketches);
-            match select_candidate_frontier(&mut harness.candidates, FrontierPolicy::default()) {
-                Ok(frontier) => {
-                    harness.frontier = frontier;
-                    harness.selected_candidate_id = harness.frontier.selected_candidate_id.clone();
-                }
-                Err(_) => {}
+            if let Ok(frontier) =
+                select_candidate_frontier(&mut harness.candidates, FrontierPolicy::default())
+            {
+                harness.frontier = frontier;
+                harness.selected_candidate_id = harness.frontier.selected_candidate_id.clone();
             }
             if let Some(selected) = harness
                 .candidates
@@ -575,12 +567,11 @@ impl RunnerActor {
         error: &RunnerError,
     ) {
         if let Ok(Some(mut state)) = store.load(root).await {
-            if let Some(plan) = state.current_plan.as_mut() {
-                if let Some(harness) = plan.harness.as_mut() {
-                    if let Some(g) = harness.agent_generation.as_mut() {
-                        g.status = AgentGenStatus::Failed;
-                    }
-                }
+            if let Some(plan) = state.current_plan.as_mut()
+                && let Some(harness) = plan.harness.as_mut()
+                && let Some(g) = harness.agent_generation.as_mut()
+            {
+                g.status = AgentGenStatus::Failed;
             }
             let _ = store.save(state).await;
         }

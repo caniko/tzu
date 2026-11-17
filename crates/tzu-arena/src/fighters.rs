@@ -1,23 +1,17 @@
-use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
+use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::text::{Justify, TextColor, TextFont, TextLayout};
 use tzu_core::VerifierDependency;
 
-use crate::data::{ArenaFighterData, ArenaPlanData};
+use crate::data::ArenaPlanData;
 use crate::theme::archetype_colors;
 
 #[derive(Component, Debug, Clone)]
 pub struct Fighter {
     pub candidate_id: String,
-    pub sketch_id: String,
-    pub summary: String,
-    pub archetype: VerifierDependency,
     pub max_hp: f32,
     pub hp: f32,
-    pub power: f32,
     pub eliminated: bool,
-    pub retained: bool,
 }
 
 #[derive(Component)]
@@ -40,7 +34,6 @@ pub struct ChampionGlow {
 const FIGHTER_WIDTH: f32 = 48.0;
 const FIGHTER_HEIGHT: f32 = 64.0;
 const HP_BAR_WIDTH: f32 = 60.0;
-const HP_BAR_HEIGHT: f32 = 6.0;
 
 pub fn spawn_fighters(
     mut commands: Commands,
@@ -66,14 +59,9 @@ pub fn spawn_fighters(
             Transform::from_xyz(0.0, 1000.0, 1.0),
             Fighter {
                 candidate_id: fighter_data.candidate_id.clone(),
-                sketch_id: fighter_data.sketch_id.clone(),
-                summary: fighter_data.summary.clone(),
-                archetype: fighter_data.archetype,
                 max_hp: fighter_data.max_hp,
                 hp: fighter_data.max_hp,
-                power: fighter_data.power.total,
                 eliminated: false,
-                retained: plan_data.is_retained(&fighter_data.candidate_id),
             },
             EntranceAnimation {
                 progress: 0.0,
@@ -127,9 +115,7 @@ pub fn sync_health_bars(
     }
 }
 
-pub fn mark_eliminated(
-    mut fighters: Query<(&mut Fighter, &mut Sprite, &mut Transform)>,
-) {
+pub fn mark_eliminated(mut fighters: Query<(&mut Fighter, &mut Sprite, &mut Transform)>) {
     for (mut fighter, mut sprite, mut transform) in fighters.iter_mut() {
         if fighter.eliminated && fighter.hp > 0.0 {
             fighter.hp = (fighter.hp - 2.0).max(0.0);
@@ -168,33 +154,31 @@ fn create_fighter_texture(
 
             let inside = match archetype {
                 VerifierDependency::Static => {
-                    let body = py > 20.0 && py < 60.0
-                        && px > 8.0 && px < 40.0;
-                    let helmet = py > 55.0 && py < 64.0
+                    let body = py > 20.0 && py < 60.0 && px > 8.0 && px < 40.0;
+                    let helmet = py > 55.0
+                        && py < 64.0
                         && px > (12.0 + (py - 55.0) * 0.8)
                         && px < (36.0 - (py - 55.0) * 0.8);
-                    let shield = py > 10.0 && py < 35.0
-                        && px > 0.0 && px < 14.0;
+                    let shield = py > 10.0 && py < 35.0 && px > 0.0 && px < 14.0;
                     body || helmet || shield
                 }
                 VerifierDependency::Repository => {
-                    let body = py > 15.0 && py < 62.0
-                        && px > 12.0 && px < 36.0;
-                    let hat = py > 58.0 && py < 64.0
-                        && px > 8.0 && px < 40.0;
-                    let bow = py > 20.0 && py < 50.0
+                    let body = py > 15.0 && py < 62.0 && px > 12.0 && px < 36.0;
+                    let hat = py > 58.0 && py < 64.0 && px > 8.0 && px < 40.0;
+                    let bow = py > 20.0
+                        && py < 50.0
                         && ((px > 0.0 && px < 6.0) || (px > 42.0 && px < 48.0));
                     body || hat || bow
                 }
                 VerifierDependency::Agent => {
-                    let robe = py > 10.0 && py < 60.0
-                        && px > 6.0 && px < 42.0
+                    let robe = py > 10.0
+                        && py < 60.0
+                        && px > 6.0
+                        && px < 42.0
                         && px > (6.0 + (py - 10.0) * 0.3)
                         && px < (42.0 - (py - 10.0) * 0.3);
-                    let scroll = py > 30.0 && py < 55.0
-                        && px > 0.0 && px < 8.0;
-                    let hood = py > 52.0 && py < 64.0
-                        && px > 12.0 && px < 36.0;
+                    let scroll = py > 30.0 && py < 55.0 && px > 0.0 && px < 8.0;
+                    let hood = py > 52.0 && py < 64.0 && px > 12.0 && px < 36.0;
                     robe || scroll || hood
                 }
             };
