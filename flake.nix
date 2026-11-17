@@ -57,6 +57,8 @@
         cacheRoot = null;
         namespaceScope = "canix-rust";
         namespaceGeneration = 5;
+        # GitHub runners have no managed sccache transport; use a private per-build dir there.
+        ephemeralFallback = true;
       };
       guiAssetSource = path: let
         rel = pkgs.lib.removePrefix "${toString ./.}/" (toString path);
