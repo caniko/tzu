@@ -109,15 +109,15 @@ This starts an MCP server over stdio. Configure it in your agent:
 
 Available tools:
 
-| Tool | Description |
-|---|---|
-| `tzu_init` | Initialize project state |
-| `tzu_inspect_prompt` | Validate a goal prompt before planning |
-| `tzu_plan` | Create a structured plan from a goal |
-| `tzu_status` | Show current plan, tasks, and run reports |
-| `tzu_inspect` | Show frontier selection details |
-| `tzu_run` | Execute a task by ID |
-| `tzu_context` | Get repository context summary |
+| Tool                 | Description                               |
+| -------------------- | ----------------------------------------- |
+| `tzu_init`           | Initialize project state                  |
+| `tzu_inspect_prompt` | Validate a goal prompt before planning    |
+| `tzu_plan`           | Create a structured plan from a goal      |
+| `tzu_status`         | Show current plan, tasks, and run reports |
+| `tzu_inspect`        | Show frontier selection details           |
+| `tzu_run`            | Execute a task by ID                      |
+| `tzu_context`        | Get repository context summary            |
 
 ## Codex CLI and `codex-acp`
 
